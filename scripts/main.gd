@@ -1,76 +1,89 @@
 extends Node2D
 
-## Arena: cada agente faz um "trabalho pesado" por frame.
-## Modo serial -> tudo na main thread, o FPS cai.
-## Modo threads -> WorkerThreadPool distribui nos núcleos, o FPS aguenta.
+## Arena: cada player faz um "trabalho pesado" por frame.
+## Modo serial -> tudo na main thread, as tarefas saem em fila.
+## Modo threads -> 1 tarefa por player, elas rodam sobrepostas.
+## Quem mostra os números é scenes/hud.tscn.
 
-const AGENTS := 256
-const RADIUS := 8.0
+const RADIUS := 20.0
+const WORK_LOAD := 40000  ## iterações de trabalho falso por player
 
 @export var use_threads := false
-@export var work_load := 20000  ## iterações de trabalho falso por agente
 
-var pos := PackedVector2Array()
-var vel := PackedVector2Array()
-var heat := PackedFloat32Array()  ## resultado do trabalho, só pra colorir
+var players: Array[Player] = []
+var _frame_t0 := 0
+## Medidas retidas por modo (false = serial, true = threads), pra comparar
+## os dois lado a lado mesmo depois de alternar.
+var fps_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
+var ms_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 
-@onready var hud: Label = $HUD
+@onready var hud: Control = $HUD
 
 
 func _ready() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 1
+	# FPS destravado: sem vsync o custo do trabalho aparece direto no FPS.
+	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
+	Engine.max_fps = 0
+	_spawn_players()
+
+
+## P1 teclado WASD + controle 0, P2 setas + controle 1, P3 IJKL + controle 2.
+func _spawn_players() -> void:
 	var size := get_viewport_rect().size
-	for i in AGENTS:
-		pos.append(Vector2(rng.randf() * size.x, rng.randf() * size.y))
-		vel.append(Vector2(rng.randf_range(-1, 1), rng.randf_range(-1, 1)).normalized() * 120.0)
-		heat.append(0.0)
+	var setups := [
+		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D]],
+		[Color.INDIAN_RED, [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]],
+		[Color.MEDIUM_SEA_GREEN, [KEY_I, KEY_K, KEY_J, KEY_L]],
+	]
+	for i in setups.size():
+		var spot := Vector2(size.x * (i + 1) / (setups.size() + 1), size.y * 0.5)
+		players.append(Player.new(spot, setups[i][0], setups[i][1], i))
 
 
 func _process(delta: float) -> void:
+	var bounds := get_viewport_rect().size
+	for p in players:
+		p.poll_input()  # main thread: Input não é thread-safe
+
+	_frame_t0 = Time.get_ticks_usec()
+	# ponytail: 1 tarefa por player -> na prática 1 thread por player.
 	if use_threads:
-		# ponytail: group_task já faz o particionamento; sem Thread/Mutex manual.
-		var task := WorkerThreadPool.add_group_task(_step_agent, AGENTS, -1, true)
+		var task := WorkerThreadPool.add_group_task(
+			_step_player.bind(delta, bounds), players.size(), -1, true
+		)
 		WorkerThreadPool.wait_for_group_task_completion(task)
 	else:
-		for i in AGENTS:
-			_step_agent(i)
+		for i in players.size():
+			_step_player(i, delta, bounds)
 
-	var size := get_viewport_rect().size
-	for i in AGENTS:
-		pos[i] += vel[i] * delta
-		if pos[i].x < 0.0 or pos[i].x > size.x:
-			vel[i] = Vector2(-vel[i].x, vel[i].y)
-		if pos[i].y < 0.0 or pos[i].y > size.y:
-			vel[i] = Vector2(vel[i].x, -vel[i].y)
-
-	hud.text = "%s | FPS: %d | agentes: %d | carga: %d\n[ESPAÇO] alternar  [↑/↓] carga" % [
-		"THREADS (WorkerThreadPool)" if use_threads else "SERIAL (main thread)",
-		Engine.get_frames_per_second(), AGENTS, work_load,
-	]
+	# lerp: o FPS instantâneo do Godot oscila demais pra ler na tela.
+	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
+	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
+	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, players, _frame_t0)
 	queue_redraw()
 
 
-## Roda em paralelo: só escreve em heat[i], índice exclusivo -> sem lock.
-# ponytail: heat tem uma única referência (nunca copiada), então o CoW do Packed
-# array não dispara durante a escrita. Se passar heat pra outro lugar, use Mutex
-# ou buffers por thread.
-func _step_agent(i: int) -> void:
-	var acc := 0.0
-	for k in work_load:
-		acc += sqrt(float(k) + float(i))
-	heat[i] = fmod(acc, 1.0)
+## Roda na thread do player i: escreve só em players[i].
+func _step_player(i: int, delta: float, bounds: Vector2) -> void:
+	players[i].step(delta, WORK_LOAD, bounds)
+
+
+## Duração total do trecho de trabalho, do dispatch ao último player terminar.
+func _span_usec() -> int:
+	var last := _frame_t0
+	for p in players:
+		last = maxi(last, p.t_end)
+	return last - _frame_t0
 
 
 func _draw() -> void:
-	for i in AGENTS:
-		draw_circle(pos[i], RADIUS, Color.from_hsv(heat[i], 0.7, 1.0))
+	for p in players:
+		draw_circle(p.pos, RADIUS, p.color)
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_accept"):
 		use_threads = not use_threads
-	elif event.is_action_pressed("ui_up"):
-		work_load += 5000
-	elif event.is_action_pressed("ui_down"):
-		work_load = max(0, work_load - 5000)
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_H:
+		hud.cycle_detail()
