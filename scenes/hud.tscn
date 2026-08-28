@@ -1,0 +1,19 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1"]
+
+[node name="HUD" type="Control"]
+offset_left = 12.0
+offset_top = 12.0
+offset_right = 484.0
+offset_bottom = 448.0
+mouse_filter = 2
+script = ExtResource("1")
+
+[node name="Info" type="RichTextLabel" parent="."]
+offset_right = 472.0
+offset_bottom = 180.0
+mouse_filter = 2
+bbcode_enabled = true
+scroll_active = false
+fit_content = true
