@@ -17,12 +17,34 @@ var heat := 0.0  ## resultado do trabalho pesado, só pra provar que rodou
 var t_start := 0  ## usec, início do step -> alimenta o gráfico
 var t_end := 0
 
+var idle_texture: Texture2D
+var run_texture: Texture2D
+var idle_frames := 8
+var run_frames := 6
+var frame_size := Vector2(192, 192)
+var anim_fps := 10.0
+var anim_time := 0.0
+var facing_right := true
 
-func _init(start_pos: Vector2, col: Color, key_list: Array, device: int) -> void:
+
+func _init(
+	start_pos: Vector2,
+	col: Color,
+	key_list: Array,
+	device: int,
+	idle_tex: Texture2D = null,
+	run_tex: Texture2D = null,
+	i_frames := 8,
+	r_frames := 6,
+) -> void:
 	pos = start_pos
 	color = col
 	keys = PackedInt32Array(key_list)
 	joy_device = device
+	idle_texture = idle_tex
+	run_texture = run_tex
+	idle_frames = i_frames
+	run_frames = r_frames
 
 
 ## Main thread only: a classe Input não é thread-safe.
@@ -47,5 +69,25 @@ func step(delta: float, work_load: int, bounds: Vector2) -> void:
 	for k in work_load:
 		acc += sqrt(float(k) + pos.x)
 	heat = fmod(acc, 1.0)
-	pos = (pos + input * SPEED * delta).clamp(Vector2.ZERO, bounds)
+	pos = (pos + input * SPEED * delta).clamp(Vector2(32, 32), bounds - Vector2(32, 32))
+	anim_time += delta
+	if input.x > 0.05:
+		facing_right = true
+	elif input.x < -0.05:
+		facing_right = false
 	t_end = Time.get_ticks_usec()
+
+
+func is_running() -> bool:
+	return input.length_squared() > 0.01
+
+
+func get_current_texture() -> Texture2D:
+	return run_texture if is_running() else idle_texture
+
+
+func get_current_frame() -> int:
+	var total := run_frames if is_running() else idle_frames
+	if total <= 0:
+		return 0
+	return int(anim_time * anim_fps) % total

@@ -8,6 +8,13 @@ extends Node2D
 const RADIUS := 20.0
 const WORK_LOAD := 40000  ## iterações de trabalho falso por player
 
+const BLUE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png")
+const BLUE_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Run.png")
+const RED_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Idle.png")
+const RED_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Run.png")
+const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png")
+const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
+
 @export var use_threads := false
 
 var players: Array[Player] = []
@@ -31,13 +38,20 @@ func _ready() -> void:
 func _spawn_players() -> void:
 	var size := get_viewport_rect().size
 	var setups := [
-		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D]],
-		[Color.INDIAN_RED, [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]],
-		[Color.MEDIUM_SEA_GREEN, [KEY_I, KEY_K, KEY_J, KEY_L]],
+		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D], BLUE_IDLE, BLUE_RUN],
+		[Color.INDIAN_RED, [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT], RED_IDLE, RED_RUN],
+		[Color(0.96, 0.78, 0.22), [KEY_I, KEY_K, KEY_J, KEY_L], YELLOW_IDLE, YELLOW_RUN],
 	]
 	for i in setups.size():
 		var spot := Vector2(size.x * (i + 1) / (setups.size() + 1), size.y * 0.5)
-		players.append(Player.new(spot, setups[i][0], setups[i][1], i))
+		players.append(Player.new(
+			spot,
+			setups[i][0],
+			setups[i][1],
+			i,
+			setups[i][2],
+			setups[i][3]
+		))
 
 
 func _process(delta: float) -> void:
@@ -85,7 +99,47 @@ func _span_usec() -> int:
 
 func _draw() -> void:
 	for p in players:
+		_draw_player(p)
+
+
+func _draw_player(p: Player) -> void:
+	# 1. Sombra elíptica sob os pés
+	var shadow_pos := p.pos + Vector2(0, 36)
+	draw_set_transform(shadow_pos, 0.0, Vector2(1.0, 0.35))
+	draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	# 2. Sprite animado do guerreiro com flip horizontal ao virar para a esquerda
+	var tex := p.get_current_texture()
+	if tex:
+		var frame := p.get_current_frame()
+		var fw := p.frame_size.x
+		var fh := p.frame_size.y
+		var src_rect := Rect2(frame * fw, 0, fw, fh)
+		var dest_rect := Rect2(-fw * 0.5, -fh * 0.5, fw, fh)
+		var flip_scale := Vector2(1.0 if p.facing_right else -1.0, 1.0)
+
+		draw_set_transform(p.pos, 0.0, flip_scale)
+		draw_texture_rect_region(tex, dest_rect, src_rect)
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	else:
 		draw_circle(p.pos, RADIUS, p.color)
+
+	# 3. Badge identificador do player (P1, P2, P3) acima da cabeça
+	var badge_size := Vector2(26, 16)
+	var badge_pos := p.pos + Vector2(-badge_size.x * 0.5, -58)
+	var badge_rect := Rect2(badge_pos, badge_size)
+	draw_rect(badge_rect, Color(0.05, 0.06, 0.08, 0.85), true)
+	draw_rect(badge_rect, p.color, false, 1.5)
+	draw_string(
+		ThemeDB.fallback_font,
+		badge_pos + Vector2(4, 12),
+		"P%d" % (p.joy_device + 1),
+		HORIZONTAL_ALIGNMENT_LEFT,
+		-1,
+		11,
+		p.color
+	)
 
 
 func _unhandled_input(event: InputEvent) -> void:
