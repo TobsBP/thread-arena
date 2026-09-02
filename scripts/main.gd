@@ -2,7 +2,7 @@ extends Node2D
 
 ## Arena: cada player faz um "trabalho pesado" por frame.
 ## Modo serial -> tudo na main thread, as tarefas saem em fila.
-## Modo threads -> 1 tarefa por player, elas rodam sobrepostas.
+## Modo threads -> 1 Thread por player, elas rodam sobrepostas.
 ## Quem mostra os números é scenes/hud.tscn.
 
 const RADIUS := 20.0
@@ -46,12 +46,19 @@ func _process(delta: float) -> void:
 		p.poll_input()  # main thread: Input não é thread-safe
 
 	_frame_t0 = Time.get_ticks_usec()
-	# ponytail: 1 tarefa por player -> na prática 1 thread por player.
 	if use_threads:
-		var task := WorkerThreadPool.add_group_task(
-			_step_player.bind(delta, bounds), players.size(), -1, true
-		)
-		WorkerThreadPool.wait_for_group_task_completion(task)
+		# Uma Thread por player, criada e destruída a cada frame.
+		# start() dispara e volta na hora; o trabalho já está rodando em paralelo.
+		# ponytail: criar thread por frame custa ~50us contra ~3ms de trabalho.
+		# Se WORK_LOAD cair muito, virar pool de threads persistentes + Semaphore.
+		var threads: Array[Thread] = []
+		for i in players.size():
+			var t := Thread.new()
+			t.start(_step_player.bind(i, delta, bounds))
+			threads.append(t)
+		# Barreira: bloqueia até cada thread terminar (e libera os recursos dela).
+		for t in threads:
+			t.wait_to_finish()
 	else:
 		for i in players.size():
 			_step_player(i, delta, bounds)
@@ -63,7 +70,7 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 
-## Roda na thread do player i: escreve só em players[i].
+## Roda na Thread do player i: escreve só em players[i].
 func _step_player(i: int, delta: float, bounds: Vector2) -> void:
 	players[i].step(delta, WORK_LOAD, bounds)
 

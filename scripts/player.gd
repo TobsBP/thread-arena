@@ -1,7 +1,7 @@
 class_name Player
 extends RefCounted
 
-## Um player = uma tarefa do WorkerThreadPool por frame (ver main.gd).
+## Um player = uma Thread por frame (ver main.gd).
 ## Input é lido na main thread; a tarefa só escreve nos campos deste objeto,
 ## que é exclusivo daquele índice -> sem lock.
 
@@ -40,7 +40,7 @@ func poll_input() -> void:
 	input = (kb + joy).limit_length(1.0)
 
 
-## Roda na thread do player.
+## Roda na Thread do player.
 func step(delta: float, work_load: int, bounds: Vector2) -> void:
 	t_start = Time.get_ticks_usec()
 	var acc := 0.0

@@ -106,7 +106,7 @@ func _bar_box() -> StyleBoxFlat:
 
 func _mode_title() -> String:
 	if _use_threads:
-		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d tarefas no WorkerThreadPool[/font_size]" % [
+		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas[/font_size]" % [
 			GOOD, _players.size(),
 		]
 	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread[/font_size]" % BAD

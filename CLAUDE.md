@@ -21,8 +21,9 @@ alterna serial/threads.
 ## Convenções
 
 - Cenas em `scenes/`, scripts em `scripts/`; caminhos sempre `res://`.
-- Paralelismo via `WorkerThreadPool.add_group_task()` — **não** criar `Thread`
-  manualmente a menos que a demo precise mostrar isso explicitamente.
+- Paralelismo com `Thread` explícita (`new`/`start`/`wait_to_finish`), 1 por
+  player, criada e destruída por frame — a demo existe pra mostrar isso na cara.
+  Não trocar por `WorkerThreadPool` sem o custo de criação virar problema.
 - Sem locks enquanto cada tarefa escrever só no próprio índice (`players[i]`).
   Se algum dado passar a ser compartilhado, aí sim `Mutex` (e vale mostrar na
   demo).
