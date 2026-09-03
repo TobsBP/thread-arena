@@ -10,8 +10,8 @@ const WORK_LOAD := 40000  ## iterações de trabalho falso por player
 
 const BLUE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png")
 const BLUE_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Run.png")
-const RED_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Idle.png")
-const RED_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Run.png")
+const PURPLE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Idle.png")
+const PURPLE_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Run.png")
 const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png")
 const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
 
@@ -39,7 +39,7 @@ func _spawn_players() -> void:
 	var size := get_viewport_rect().size
 	var setups := [
 		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D], BLUE_IDLE, BLUE_RUN],
-		[Color.INDIAN_RED, [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT], RED_IDLE, RED_RUN],
+		[Color(0.72, 0.45, 0.95), [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT], PURPLE_IDLE, PURPLE_RUN],
 		[Color(0.96, 0.78, 0.22), [KEY_I, KEY_K, KEY_J, KEY_L], YELLOW_IDLE, YELLOW_RUN],
 	]
 	for i in setups.size():
