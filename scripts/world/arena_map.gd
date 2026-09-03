@@ -33,6 +33,29 @@ const PATCH_COUNT := 18
 const PATCH_CELL := Vector2i(1, 1)
 ## E translúcida, pra ser variação de tom e não um remendo.
 const PATCH_ALPHA := 0.45
+
+## Relevo: platôs de pedra com grama em cima, montados da metade direita do
+## mesmo tileset (colunas 5-7 são o topo elevado, linhas 4-5 são a parede de
+## pedra) — daí sai o barranco de verdade, sem terrain set.
+## Cada platô é uma união de retângulos em tiles, pra a silhueta não ser
+## sempre o mesmo bloco: um L, uma crista comprida e um T. `ramp` é a célula
+## da beirada de baixo onde a parede abre — é o único jeito de subir, os
+## blockers fecham todo o resto do contorno.
+const PLATEAUS := [
+	{"parts": [Rect2i(6, 13, 4, 5), Rect2i(10, 15, 5, 3)], "ramp": Vector2i(11, 17)},
+	{"parts": [Rect2i(18, 8, 8, 3)], "ramp": Vector2i(21, 10)},
+	{"parts": [Rect2i(37, 14, 6, 3), Rect2i(38, 17, 4, 3)], "ramp": Vector2i(39, 19)},
+]
+const WALL_ROWS := 2  ## altura da parede de pedra, em tiles
+const RAMP_W := 2  ## largura do vão da rampa, em tiles
+## Colunas e linhas do bloco elevado dentro do tileset, por posição
+## (primeira / miolo / última).
+## (a 4a coluna/linha de cada bloco é uma ponta estreita, com folga
+## transparente do lado — encaixa com seam. A ilha já usa só as 3 primeiras.)
+const TOP_COLS := [5, 6, 7]
+const TOP_ROWS := [0, 1, 2]
+const WALL_ROW := [4, 5]  ## de cima pra baixo
+const PLATEAU_CLEAR := 48.0
 ## Tufos de mato espalhados pelo campo: são os arbustos do pack em escala
 ## menor, e já vêm com o balanço de 8 quadros.
 const TUFT_COUNT := 80
@@ -160,6 +183,7 @@ var tree_spots: Array[Vector2] = []
 @onready var foam: TileMapLayer = $Foam
 @onready var ground: TileMapLayer = $Ground
 @onready var patches: TileMapLayer = $Patches
+@onready var plateaus: TileMapLayer = $Plateaus
 @onready var decor: Node2D = $Decor
 @onready var clouds: Node2D = $Clouds
 
@@ -231,6 +255,84 @@ func _build_ground(rng: RandomNumberGenerator) -> void:
 		_fill_blob(patches, patch_id,
 				rng.randi_range(first + rx, last_x - rx),
 				rng.randi_range(first + ry, last_y - ry), rx, ry, rng)
+
+	var plateau_id := _full_tile_set(plateaus, GROUND)
+	for p in PLATEAUS:
+		_build_plateau(plateau_id, p["parts"], p["ramp"])
+
+
+## Um platô: o topo de grama, a parede de pedra embaixo e a rampa, que é uma
+## faixa de grama descendo pela parede no lugar da pedra.
+## O tile de cada célula sai dos vizinhos (autotile na unha: sem vizinho à
+## esquerda = coluna da esquerda, e assim por diante), que é o que deixa a
+## silhueta ser qualquer união de retângulos e não só um bloco.
+## ponytail: canto côncavo usa o tile de miolo — o tileset não tem peça de
+## canto interno. Some no meio da grama; se incomodar, é peça nova, não código.
+## ponytail: rampa em tile de grama, e não nas peças diagonais do tileset —
+## elas são a ponta chanfrada de um barranco (1 tile de largura, encaixe
+## fixo), não um vão de tamanho livre. Trocar se a demo pedir a diagonal.
+func _build_plateau(source_id: int, parts: Array, ramp: Vector2i) -> void:
+	var cells := {}
+	for r: Rect2i in parts:
+		for y in range(r.position.y, r.end.y):
+			for x in range(r.position.x, r.end.x):
+				cells[Vector2i(x, y)] = true
+
+	for c: Vector2i in cells:
+		var cx: int = TOP_COLS[_neighbor_cell(cells, c, Vector2i.RIGHT)]
+		var cy: int = TOP_ROWS[_neighbor_cell(cells, c, Vector2i.DOWN)]
+		var on_ramp := c.y == ramp.y and c.x >= ramp.x and c.x < ramp.x + RAMP_W
+		if on_ramp:
+			cy = TOP_ROWS[1]  # sem beirada: a grama desce direto pra parede
+		plateaus.set_cell(c, source_id, Vector2i(cx, cy))
+		if cells.has(c + Vector2i.DOWN):
+			continue
+		for w in WALL_ROWS:
+			# No vão a parede vira grama: é a faixa que desce até o campo.
+			var cell := Vector2i(TOP_COLS[1], TOP_ROWS[1])
+			if not on_ramp:
+				cell = Vector2i(cx, WALL_ROW[w])
+			plateaus.set_cell(c + Vector2i.DOWN * (w + 1), source_id, cell)
+		if not on_ramp:
+			blockers.append(_cell_rect(c + Vector2i.DOWN, WALL_ROWS))
+
+	# Contorno do topo: quem faz beirada é barranco, o miolo fica livre pra
+	# andar em cima. O vão da rampa é a única célula de borda sem blocker.
+	for c: Vector2i in cells:
+		if c.y == ramp.y and c.x >= ramp.x and c.x < ramp.x + RAMP_W:
+			continue
+		for dir in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN]:
+			if not cells.has(c + dir):
+				blockers.append(_cell_rect(c, 1))
+				break
+
+
+## 0 sem vizinho pro lado contrário, 2 sem vizinho pra `dir`, 1 no miolo —
+## é o `_edge_cell()` das camadas retangulares, só que olhando os vizinhos.
+func _neighbor_cell(cells: Dictionary, c: Vector2i, dir: Vector2i) -> int:
+	if not cells.has(c - dir):
+		return 0
+	return 2 if not cells.has(c + dir) else 1
+
+
+func _cell_rect(c: Vector2i, rows: int) -> Rect2:
+	return Rect2(Vector2(c) * TILE, Vector2(TILE, TILE * rows))
+
+
+## TileSet com a folha inteira: o platô usa células espalhadas pelo tileset,
+## não o bloco 3x3 contíguo que a ilha e a espuma usam.
+func _full_tile_set(layer: TileMapLayer, tex: Texture2D) -> int:
+	var atlas := TileSetAtlasSource.new()
+	atlas.texture = tex
+	atlas.texture_region_size = Vector2i(TILE, TILE)
+	var size := tex.get_size() / TILE
+	for cy in int(size.y):
+		for cx in int(size.x):
+			atlas.create_tile(Vector2i(cx, cy))
+	var tile_set := TileSet.new()
+	tile_set.tile_size = Vector2i(TILE, TILE)
+	layer.tile_set = tile_set
+	return tile_set.add_source(atlas)
 
 
 ## Mancha em elipse com a borda roída pelo rng: retângulo de tiles se
@@ -435,7 +537,7 @@ func _sway_frames(tex: Texture2D, frames: int, fps: float) -> SpriteFrames:
 
 ## Em terra firme, em qualquer lugar.
 func _land_spot(rng: RandomNumberGenerator) -> Vector2:
-	return ISLAND.position + Vector2(rng.randf(), rng.randf()) * ISLAND.size
+	return _off_plateau(ISLAND.position + Vector2(rng.randf(), rng.randf()) * ISLAND.size)
 
 
 ## Em terra, fora da faixa central onde os players andam.
@@ -443,7 +545,35 @@ func _edge_spot(rng: RandomNumberGenerator) -> Vector2:
 	var y := rng.randf()
 	if y > 0.32 and y < 0.7:
 		y = 0.72 + rng.randf() * 0.24
-	return ISLAND.position + Vector2(rng.randf(), y) * ISLAND.size
+	return _off_plateau(ISLAND.position + Vector2(rng.randf(), y) * ISLAND.size)
+
+
+## Empurra o ponto pra fora do platô mais perto, pelo lado mais curto. Sortear
+## de novo até cair fora seria loop sem teto garantido; isto sempre termina.
+func _off_plateau(p: Vector2) -> Vector2:
+	for pl in PLATEAUS:
+		var box: Rect2i = pl["parts"][0]
+		for r: Rect2i in pl["parts"]:
+			box = box.merge(r)
+		box.size.y += WALL_ROWS
+		var rect := Rect2(Vector2(box.position) * TILE,
+				Vector2(box.size) * TILE).grow(PLATEAU_CLEAR)
+		if not rect.has_point(p):
+			continue
+		var left := p.x - rect.position.x
+		var right := rect.end.x - p.x
+		var top_d := p.y - rect.position.y
+		var bottom := rect.end.y - p.y
+		var m: float = min(min(left, right), min(top_d, bottom))
+		if m == left:
+			p.x = rect.position.x
+		elif m == right:
+			p.x = rect.end.x
+		elif m == top_d:
+			p.y = rect.position.y
+		else:
+			p.y = rect.end.y
+	return p
 
 
 ## Na água: sorteia no mundo inteiro e joga pra fora da ilha pelo lado mais

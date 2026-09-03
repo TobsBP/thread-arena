@@ -17,16 +17,21 @@ controles.
   `UnitSprite`
 - `scenes/world/arena_map.tscn` / `scripts/world/arena_map.gd` — `ArenaMap`:
   cenário em nós (TileMapLayer de água, espuma animada na costa, a ilha de
-  grama e as manchas de grama escura — todas montadas do mesmo bloco 3x3 do
-  tileset, sem terrain set —, mais Sprite2D/AnimatedSprite2D de construções,
-  árvores,
-  arbustos, pedras, tralha de acampamento e fogueiras), a camada `Clouds` que
+  grama, os platôs de relevo — silhueta em união de retângulos (L, crista,
+  T) com autotile por vizinho, topo de grama, parede de pedra, a sombra na
+  camada `PlateauShadow` (a silhueta repetida um tile abaixo, como manda o
+  Tilemap Guide do pack) e a rampa nas peças de escada do tileset, único
+  acesso ao topo — e as manchas de grama escura, todas
+  montadas do mesmo tileset sem terrain set, mais Sprite2D/AnimatedSprite2D
+  de construções, árvores, arbustos, pedras, tralha de acampamento e
+  fogueiras), a camada `Clouds` que
   atravessa o mapa (única coisa que o `_process()` do mapa mexe), um
   `CanvasModulate` de fim de tarde com `PointLight2D` nas fogueiras, e as
   medidas do mundo: `WORLD`, `ISLAND` (terra firme) e `PLAY_AREA` (onde as
   unidades andam). Monta tudo no `_ready()`, não sabe de threads. Expõe
-  `blockers` (`Array[Rect2]` da base das árvores e construções), montado no
-  `_ready()` e só lido depois — as threads leem sem lock, e
+  `blockers` (`Array[Rect2]` da base das árvores e construções, mais o
+  barranco dos platôs — beiradas e parede, menos o vão da rampa), montado
+  no `_ready()` e só lido depois — as threads leem sem lock, e
   `Player._push_out()` empurra a unidade pra fora pelo lado mais perto
 - `scripts/world/unit_sprite.gd` — `UnitSprite`: um nó de desenho por unidade,
   irmão das árvores dentro do `Decor` y-sorted (é o que faz o player passar
