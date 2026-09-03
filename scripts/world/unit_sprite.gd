@@ -14,6 +14,7 @@ const UI_BAR := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free 
 const UI_BAR_FILL := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Bars/SmallBar_Fill.png")
 const UI_RIBBON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Ribbons/SmallRibbons.png")
 const DUST := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Particle FX/Dust_01.png")
+const BOOM := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Particle FX/Explosion_01.png")
 
 ## Recortes: as duas texturas têm as pontas nas bordas e o miolo em x 128..192.
 const BAR_SRC := Rect2(49, 22, 222, 19)
@@ -25,6 +26,8 @@ const RADIUS := 20.0  ## círculo de reserva, se a unidade não tiver textura
 const DUST_FRAMES := 8
 const DUST_FPS := 14.0
 const DUST_SIZE := 64.0
+const BOOM_FRAMES := 8
+const BOOM_SIZE := 192.0
 
 var unit: Player
 var show_badge := true  ## ovelha não tem nome nem barra de vida
@@ -54,11 +57,12 @@ func _draw() -> void:
 
 	_draw_dust()
 	_draw_body(body)
+	_draw_boom(body)
 	if not show_badge or unit.is_dead():
 		return
 
 	# Faixa com o nome e barra de vida, ambas do pack de UI.
-	_draw_hslice(UI_RIBBON, Rect2(body + Vector2(-30, -92), Vector2(60, 22)),
+	PackUI.hslice(self, UI_RIBBON, Rect2(body + Vector2(-30, -92), Vector2(60, 22)),
 			Rect2(Vector2(2, unit.ribbon_y), RIBBON_SIZE), RIBBON_CAP)
 	draw_string(
 		ThemeDB.fallback_font,
@@ -71,7 +75,7 @@ func _draw() -> void:
 	)
 
 	var bar := Rect2(body + Vector2(-32, -68), Vector2(64, 19))
-	_draw_hslice(UI_BAR, bar, BAR_SRC, BAR_CAP)
+	PackUI.hslice(self, UI_BAR, bar, BAR_SRC, BAR_CAP)
 	var ratio := clampf(unit.hp / unit.max_hp, 0.0, 1.0)
 	if ratio > 0.0:
 		# Faixa vermelha do asset: 3px de altura, 8px abaixo do topo da barra.
@@ -107,18 +111,18 @@ func _draw_dust() -> void:
 	draw_texture_rect_region(DUST,
 			Rect2(Vector2(-DUST_SIZE * 0.5, -DUST_SIZE * 0.7), Vector2(DUST_SIZE, DUST_SIZE)),
 			Rect2(frame * DUST_SIZE, 0, DUST_SIZE, DUST_SIZE),
-			Color(1, 1, 1, 0.55))
+			Color(1, 1, 1, 0.8))
 
 
-## 9-slice horizontal: as pontas de `cap` px saem inteiras (só escaladas) e o
-## miolo (sempre x 128..192 nas texturas do pack) estica no que sobrar.
-func _draw_hslice(tex: Texture2D, dest: Rect2, src: Rect2, cap: float) -> void:
-	var c := cap * dest.size.y / src.size.y
-	draw_texture_rect_region(tex, Rect2(dest.position, Vector2(c, dest.size.y)),
-			Rect2(src.position, Vector2(cap, src.size.y)))
-	draw_texture_rect_region(tex,
-			Rect2(dest.position + Vector2(c, 0), Vector2(dest.size.x - 2.0 * c, dest.size.y)),
-			Rect2(128, src.position.y, 64, src.size.y))
-	draw_texture_rect_region(tex,
-			Rect2(dest.position + Vector2(dest.size.x - c, 0), Vector2(c, dest.size.y)),
-			Rect2(src.end.x - cap, src.position.y, cap, src.size.y))
+## Estouro no golpe que derruba: o pack não tem sprite de morte, então a
+## explosão cobre o tombo nos primeiros quadros.
+func _draw_boom(body: Vector2) -> void:
+	if not unit.is_dead():
+		return
+	var frame := int(unit.death_time / Player.DEATH_TIME * BOOM_FRAMES)
+	if frame >= BOOM_FRAMES:
+		return
+	draw_texture_rect_region(BOOM,
+			Rect2(body - Vector2(BOOM_SIZE, BOOM_SIZE) * 0.5,
+					Vector2(BOOM_SIZE, BOOM_SIZE)),
+			Rect2(frame * BOOM_SIZE, 0, BOOM_SIZE, BOOM_SIZE))

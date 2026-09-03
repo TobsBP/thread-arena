@@ -24,6 +24,19 @@ const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (
 const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
 const YELLOW_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Attack1.png")
 
+## Pawns: dois azuis e dois amarelos indo do toco à base com madeira. Cenário
+## vivo, igual às ovelhas — main thread, fora de units/threads.
+const PAWN_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Idle.png")
+const PAWN_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run.png")
+const PAWN_WOOD := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run Wood.png")
+const PAWN_AXE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Interact Axe.png")
+const PAWN_IDLE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Idle.png")
+const PAWN_RUN_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Run.png")
+const PAWN_WOOD_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Run Wood.png")
+const PAWN_AXE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Axe.png")
+const PAWN_COUNT := 4
+const PAWN_SPEED := 120.0
+
 const SHEEP_GRAZE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Grass.png")
 const SHEEP_MOVE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Move.png")
 const SHEEP_COUNT := 18
@@ -40,7 +53,9 @@ var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes
 var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
 ## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
 var sheep: Array[Player] = []
-## Tudo que se esbarra: units + sheep, montado uma vez no _ready().
+## Pawns lenhadores: cenário vivo, como as ovelhas.
+var workers: Array[Player] = []
+## Tudo que se esbarra: units + sheep + workers, montado uma vez no _ready().
 var bodies: Array[Player] = []
 var _frame_t0 := 0
 ## Medidas retidas por modo (false = serial, true = threads), pra comparar
@@ -60,14 +75,18 @@ func _ready() -> void:
 	_spawn_players()
 	_spawn_enemy()
 	_spawn_sheep()
+	_spawn_workers()
 	bodies.assign(units)
 	bodies.append_array(sheep)
+	bodies.append_array(workers)
 	# Cada unidade ganha um nó de desenho dentro do cenário y-sorted: é o que
 	# faz o player passar atrás da árvore. O dado segue RefCounted.
 	for u in units:
 		map.add_unit(UnitSprite.create(u))
 	for s in sheep:
 		map.add_unit(UnitSprite.create(s, false))
+	for w in workers:
+		map.add_unit(UnitSprite.create(w, false))
 	# Câmera presa ao mundo: nunca mostra fora do chão desenhado.
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
@@ -124,6 +143,25 @@ func _spawn_sheep() -> void:
 		sheep.append(s)
 
 
+## Cada pawn puxa madeira de uma árvore pra uma construção — os pontos vêm do
+## mapa, que é quem sabe onde as coisas caíram.
+func _spawn_workers() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	for i in PAWN_COUNT:
+		var blue := i % 2 == 0
+		var home: Vector2 = map.building_spots[i % map.building_spots.size()]
+		var w := Player.new(home, Color.WHITE, [0, 0, 0, 0, 0], -1,
+				PAWN_IDLE if blue else PAWN_IDLE_Y,
+				PAWN_RUN if blue else PAWN_RUN_Y,
+				PAWN_AXE if blue else PAWN_AXE_Y, 8, 6, 6)
+		w.loaded_texture = PAWN_WOOD if blue else PAWN_WOOD_Y
+		w.speed = PAWN_SPEED
+		w.work_home = home
+		w.work_site = map.tree_spots[rng.randi() % map.tree_spots.size()]
+		workers.append(w)
+
+
 func _process(delta: float) -> void:
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
@@ -135,6 +173,10 @@ func _process(delta: float) -> void:
 	for s in sheep:
 		s.wander(delta)
 		s.step(delta, 0, PLAY_AREA, map.blockers)
+
+	for w in workers:
+		w.haul(delta)
+		w.step(delta, 0, PLAY_AREA, map.blockers)
 
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:

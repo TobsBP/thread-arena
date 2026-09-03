@@ -10,6 +10,8 @@ const BODY_RADIUS := 16.0  ## meia largura da unidade, pra afastar dos blockers
 const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
 const DEATH_TIME := 0.9  ## tombar + sumir
+const WORK_PAUSE := 2.2  ## pawn: segundos parado no serviço e na entrega
+const WORK_REACH := 60.0  ## perto o bastante do toco/da base pra parar
 
 var pos: Vector2
 var spawn_pos: Vector2  ## volta pra cá ao renascer
@@ -42,6 +44,12 @@ var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
 var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
+## Pawn: vai do serviço à base e volta, carregando a carga na ida de volta.
+var work_site := Vector2.ZERO
+var work_home := Vector2.ZERO
+var work_timer := 0.0
+var carrying := false
+var loaded_texture: Texture2D  ## sprite de corrida com a carga nas costas
 var ribbon_y := 68.0  ## linha da faixa em SmallRibbons.png (cor do badge)
 
 
@@ -104,6 +112,27 @@ func wander(delta: float) -> void:
 	if wander_time <= 0.0:
 		wander_time = randf_range(1.0, 3.0)
 		input = Vector2.ZERO if randf() < 0.35 else Vector2.RIGHT.rotated(randf() * TAU)
+
+
+## Pawn: anda até o serviço, martela um tempo, leva a carga pra base e volta.
+## Roda na main thread junto com o poll e só escreve `input`/`attack_pressed`
+## — a animação de trabalho é a de ataque, que já existe.
+func haul(delta: float) -> void:
+	if work_timer > 0.0:
+		work_timer -= delta
+		input = Vector2.ZERO
+		attack_pressed = not carrying  # machado no toco; na base só entrega
+		if work_timer <= 0.0:
+			carrying = not carrying
+		return
+	attack_pressed = false
+	var to_target := (work_home if carrying else work_site) - pos
+	if to_target.length() < WORK_REACH:
+		work_timer = WORK_PAUSE
+		input = Vector2.ZERO
+		return
+	input = to_target.normalized()
+	facing_right = to_target.x >= 0.0
 
 
 ## Main thread only: a classe Input não é thread-safe.
@@ -193,7 +222,9 @@ func is_running() -> bool:
 func get_current_texture() -> Texture2D:
 	if is_attacking() and attack_texture:
 		return attack_texture
-	return run_texture if is_running() else idle_texture
+	if not is_running():
+		return idle_texture
+	return loaded_texture if carrying and loaded_texture else run_texture
 
 
 func get_current_frame() -> int:

@@ -2,20 +2,48 @@ extends Control
 
 ## HUD: painel de números, timeline das tarefas e um histórico por unidade.
 ## Só apresenta — quem mede e guarda os tempos é o main.
+##
+## Tudo é desenhado em papel do pack (PackUI.nine), então as cores são de
+## tinta sobre papel claro, não de terminal escuro.
 
-const DIM := "#7d8590"
-const HL := "#e6edf3"
-const GOOD := "#56d364"
-const BAD := "#f0883e"
+const PAPER := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Papers/RegularPaper.png")
+const BIG_BAR := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Bars/BigBar_Base.png")
+const BIG_BAR_FILL := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Bars/BigBar_Fill.png")
+## Retratos: um por unidade, na ordem de main.gd (P1..P3 e o inimigo).
+const AVATARS := [
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Human Avatars/Avatars_01.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Human Avatars/Avatars_05.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Human Avatars/Avatars_11.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Human Avatars/Avatars_17.png"),
+]
 
-const BG := Color(0.05, 0.06, 0.08, 0.88)
-const LINE := Color(1, 1, 1, 0.12)
-const TEXT := Color(0.49, 0.53, 0.59)
+## Recortes medidos nas texturas: a barra grande tem pontas de 24px e o miolo
+## em 128..192; o preenchimento é a faixa y 20..44 da sua textura.
+const BIG_BAR_SRC := Rect2(40, 0, 240, 64)
+const BIG_BAR_CAP := 24.0
+const BIG_FILL_SRC := Rect2(0, 20, 64, 24)
+const PAPER_CAP := 20.0
+
+## Tinta sobre papel.
+const DIM := "#7a6650"
+const GOOD := "#2f6b34"
+const BAD := "#a1461e"
+
+const INK := Color(0.16, 0.13, 0.09)
+const INK_SOFT := Color(0.35, 0.27, 0.19)
+## Texto sobre a madeira escura da barra grande.
+const ON_WOOD := Color(0.97, 0.92, 0.80)
+const TRACK := Color(0, 0, 0, 0.08)
 
 const WIDTH := 460.0
-const GAP := 22.0
-const BAR_H := 20.0     ## barra da timeline
-const LANE_H := 26.0    ## faixa do histórico
+const GAP := 30.0
+## Faixa do título dentro do papel: o nine-patch do papel tem uma margem
+## transparente na peça de canto, então o topo real fica uns 8px abaixo.
+const TITLE_H := 24.0
+const BAR_H := 18.0     ## barra da timeline
+const LANE_H := 24.0    ## faixa do histórico
+const GAUGE_H := 30.0   ## barra grande do comparativo
+const AVATAR := 22.0
 const PAD := 10.0
 const SAMPLES := 90  ## ~frames guardados por unidade
 
@@ -34,17 +62,12 @@ var detail := 0
 
 
 func _ready() -> void:
-	info.add_theme_stylebox_override("normal", _panel())
-
-
-func _panel() -> StyleBoxFlat:
-	var box := StyleBoxFlat.new()
-	box.bg_color = BG
-	box.border_color = LINE
-	box.set_border_width_all(1)
-	box.set_corner_radius_all(8)
-	box.set_content_margin_all(14)
-	return box
+	# O papel é desenhado por baixo, no _draw(); o label só reserva a margem.
+	var box := StyleBoxEmpty.new()
+	box.set_content_margin_all(20)
+	info.add_theme_stylebox_override("normal", box)
+	# Sem isto o texto sem [color] sai branco — invisível sobre o papel.
+	info.add_theme_color_override("default_color", INK)
 
 
 ## [H]: menos informação na tela.
@@ -70,14 +93,6 @@ func update_stats(
 
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
-		"",
-		"[code][color=%s]                tempo/frame      FPS[/color]" % DIM,
-		"[color=%s]  SERIAL         %6.2f ms    %5.0f[/color]" % [
-			HL if not use_threads else DIM, _ms[false], _fps[false],
-		],
-		"[color=%s]  THREADS        %6.2f ms    %5.0f[/color][/code]" % [
-			HL if use_threads else DIM, _ms[true], _fps[true],
-		],
 		"",
 		_verdict(),
 		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
@@ -123,26 +138,79 @@ func _verdict() -> String:
 
 
 func _draw() -> void:
+	if detail > 1:
+		return
+	# Papel atrás do painel de texto (o Control desenha antes dos filhos).
+	PackUI.nine(self, PAPER, Rect2(0, 0, WIDTH, info.size.y), PAPER_CAP)
 	if detail != 0:
 		return
 	# Layout a partir da altura real do painel: ele cresce com o texto.
 	# Altura vem do número de unidades: entra/sai inimigo sem quebrar o layout.
+	# As alturas são apertadas de propósito — com 4 unidades a pilha inteira
+	# tem que caber na janela, senão o último painel sai pela borda de baixo.
 	var n := maxf(_units.size(), 1)
 	var y := info.size.y + GAP
-	var timeline_h := PAD + n * (BAR_H + 6)
+	var gauge_h := PAD + 2.0 * (GAUGE_H + 8.0)
+	var timeline_h := PAD + n * (BAR_H + 5)
 	var hist_h := PAD + n * (LANE_H + 4)
+	_draw_gauges(Rect2(0, y, WIDTH, gauge_h))
+	y += gauge_h + GAP + PAD
 	_draw_timeline(Rect2(0, y, WIDTH, timeline_h))
 	_draw_history(Rect2(0, y + timeline_h + GAP + PAD, WIDTH, hist_h))
 
 
+## Moldura de papel com o título dentro dela: antes o título caía na borda de
+## cima e ficava lendo em cima do cenário.
 func _frame(rect: Rect2, title: String) -> void:
-	var box := rect.grow(6)
-	draw_rect(box, BG)
-	draw_rect(box, LINE, false, 1.0)
-	draw_string(
-		ThemeDB.fallback_font, rect.position + Vector2(2, -3),
-		title, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, TEXT,
-	)
+	PackUI.nine(self, PAPER,
+			Rect2(rect.position - Vector2(14, TITLE_H),
+					rect.size + Vector2(28, TITLE_H + 14)),
+			PAPER_CAP)
+	_ink(rect.position + Vector2(4, -8), title, 14, INK_SOFT,
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, Color(1, 1, 1, 0.7))
+
+
+## As duas barras grandes do pack, uma por modo: o tempo de cada um contra o
+## pior dos dois. É a leitura de relance, então o número vive dentro da barra,
+## em texto claro sobre a madeira — tinta escura ali some.
+func _draw_gauges(rect: Rect2) -> void:
+	_frame(rect, "tempo por frame")
+	var worst := maxf(maxf(_ms[false], _ms[true]), 0.001)
+	for i in 2:
+		var threads := i == 1
+		var bar := Rect2(rect.position + Vector2(0, PAD * 0.5 + i * (GAUGE_H + 8.0)),
+				Vector2(rect.size.x, GAUGE_H))
+		PackUI.hslice(self, BIG_BAR, bar, BIG_BAR_SRC, BIG_BAR_CAP)
+		var inset := GAUGE_H * 0.22
+		var measured := _ms[threads] > 0.0
+		if measured:
+			var fill := Rect2(
+				bar.position + Vector2(inset, GAUGE_H * 20.0 / 64.0),
+				Vector2(maxf((bar.size.x - inset * 2.0) * (_ms[threads] / worst), 2.0),
+						GAUGE_H * 24.0 / 64.0),
+			)
+			draw_texture_rect_region(BIG_BAR_FILL, fill, BIG_FILL_SRC,
+					Color(1, 1, 1) if threads == _use_threads else Color(1, 1, 1, 0.5))
+		var baseline := bar.position + Vector2(inset + 4, GAUGE_H * 0.7)
+		_ink(baseline, "THREADS" if threads else "SERIAL", 14, ON_WOOD)
+		var right := Vector2(bar.position.x + inset, baseline.y)
+		var width := bar.size.x - inset * 2.0 - 4.0
+		if measured:
+			_ink(right, "%.2f ms   %.0f FPS" % [_ms[threads], _fps[threads]], 14,
+					ON_WOOD, HORIZONTAL_ALIGNMENT_RIGHT, width)
+		else:
+			_ink(right, "sem medida — aperte [ESPAÇO]", 13,
+					Color(ON_WOOD, 0.7), HORIZONTAL_ALIGNMENT_RIGHT, width)
+
+
+## Texto com um contorno escuro atrás: sobre madeira ou sobre gráfico, o
+## traço fino é o que mantém o número legível.
+func _ink(pos: Vector2, text: String, size: int, color: Color,
+		align := HORIZONTAL_ALIGNMENT_LEFT, width := -1.0,
+		halo := Color(0.08, 0.06, 0.04, 0.55)) -> void:
+	var font := ThemeDB.fallback_font
+	draw_string(font, pos + Vector2(1, 1), text, align, width, size, halo)
+	draw_string(font, pos, text, align, width, size, color)
 
 
 ## Timeline: uma barra por unidade (players + inimigo), no start/end real.
@@ -159,25 +227,25 @@ func _draw_timeline(rect: Rect2) -> void:
 		draw_line(
 			rect.position + Vector2(x, 0),
 			rect.position + Vector2(x, rect.size.y),
-			Color(1, 1, 1, 0.06), 1.0,
+			Color(0, 0, 0, 0.06), 1.0,
 		)
 	if _ms[false] > 0.0:
 		var ref := rect.size.x * (_ms[false] * 1000.0 / span)
 		draw_dashed_line(
 			rect.position + Vector2(ref, 0),
 			rect.position + Vector2(ref, rect.size.y),
-			Color(1, 1, 1, 0.45), 1.0, 4.0,
+			Color(0, 0, 0, 0.35), 1.0, 4.0,
 		)
 
 	for i in _units.size():
 		var p := _units[i]
-		var y := 10 + i * (BAR_H + 6)
+		var y := 8 + i * (BAR_H + 5)
 		var x0 := float(p.t_start - _frame_t0) / span
 		var x1 := minf(float(p.t_end - _frame_t0) / span, 1.0)
 		# Trilho: mostra o quanto da régua a barra NÃO ocupa.
 		draw_rect(
 			Rect2(rect.position + Vector2(0, y), Vector2(rect.size.x, BAR_H)),
-			Color(1, 1, 1, 0.04),
+			TRACK,
 		)
 		var bar := Rect2(
 			rect.position + Vector2(rect.size.x * x0, y),
@@ -185,11 +253,9 @@ func _draw_timeline(rect: Rect2) -> void:
 		)
 		_bars[i].bg_color = p.color
 		draw_style_box(_bars[i], bar)
-		draw_string(
-			ThemeDB.fallback_font, bar.position + Vector2(6, BAR_H - 6),
-			"%s  %.2f ms" % [_label(i), (p.t_end - p.t_start) / 1000.0],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0, 0, 0, 0.75),
-		)
+		_ink(bar.position + Vector2(8, BAR_H - 6),
+				"%s  %.2f ms" % [_label(i), (p.t_end - p.t_start) / 1000.0],
+				13, Color(1, 1, 1, 0.95))
 
 
 ## Rótulo da faixa: os controláveis são P1..Pn, o inimigo é E.
@@ -218,7 +284,7 @@ func _draw_history(rect: Rect2) -> void:
 	for i in _history.size():
 		var h := _history[i]
 		var top := rect.position + Vector2(0, 4 + i * (lane_h + 4))
-		draw_rect(Rect2(top, Vector2(rect.size.x, lane_h)), Color(1, 1, 1, 0.04))
+		draw_rect(Rect2(top, Vector2(rect.size.x, lane_h)), TRACK)
 		if h.size() >= 2:
 			var pts := PackedVector2Array()
 			for j in h.size():
@@ -229,10 +295,14 @@ func _draw_history(rect: Rect2) -> void:
 			var fill := pts.duplicate()
 			fill.append(top + Vector2(rect.size.x, lane_h))
 			fill.append(top + Vector2(0, lane_h))
-			draw_colored_polygon(fill, Color(_units[i].color, 0.22))
+			draw_colored_polygon(fill, Color(_units[i].color, 0.28))
 			draw_polyline(pts, _units[i].color, 1.5, true)
-		draw_string(
-			ThemeDB.fallback_font, top + Vector2(6, lane_h - 5),
-			"%s  %.2f ms" % [_label(i), h[-1] if not h.is_empty() else 0.0],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, TEXT,
-		)
+		# Retrato da unidade na ponta da faixa.
+		var face: Texture2D = AVATARS[i % AVATARS.size()]
+		draw_texture_rect(face, Rect2(top + Vector2(2, (lane_h - AVATAR) * 0.5),
+				Vector2(AVATAR, AVATAR)), false)
+		# Aqui o fundo é papel claro com o gráfico por trás: tinta escura com
+		# halo claro, o contrário das barras.
+		_ink(top + Vector2(AVATAR + 8, lane_h - 6),
+				"%s  %.2f ms" % [_label(i), h[-1] if not h.is_empty() else 0.0],
+				13, INK, HORIZONTAL_ALIGNMENT_LEFT, -1.0, Color(1, 1, 1, 0.7))

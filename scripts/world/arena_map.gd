@@ -24,8 +24,28 @@ const PLAY_AREA := Rect2(288, 288, 2624, 1216)
 const GROUND := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color1.png")
 const WATER := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Tileset/Water Background color.png")
 ## O tileset tem a ilha de grama num bloco 3x3: (1,1) é o miolo, o resto é
-## borda — daí sai a beirada da ilha inteira.
-const GRASS_CELL := Vector2i(1, 1)
+## borda — daí sai a beirada da ilha inteira, e também as manchas de grama
+## mais escura por cima dela.
+const GRASS_PATCH := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Tileset/Tilemap_color3.png")
+const PATCH_COUNT := 18
+## Só o miolo do bloco: as peças de borda são beirada de barranco e deixavam
+## cada mancha com um contorno retangular no meio do campo.
+const PATCH_CELL := Vector2i(1, 1)
+## E translúcida, pra ser variação de tom e não um remendo.
+const PATCH_ALPHA := 0.45
+## Tufos de mato espalhados pelo campo: são os arbustos do pack em escala
+## menor, e já vêm com o balanço de 8 quadros.
+const TUFT_COUNT := 80
+const TUFT_SCALE := 0.42
+## Onde fica o pé dos objetos de chão dentro do quadro: eles são pequenos e
+## centrados, com folga transparente embaixo.
+const GROUND_FOOT := 0.78
+
+## Espuma da costa: 16 quadros, cada um um bloco 3x3 igual ao da grama. Vira
+## tile animado e cerca a ilha por fora, na água.
+const FOAM := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Tileset/Water Foam.png")
+const FOAM_FRAMES := 16
+const FOAM_FPS := 10.0
 
 const TREES := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Tree1.png"),
@@ -132,9 +152,14 @@ const SWAY_FPS := 8.0  ## balanço de árvores e arbustos
 ## Retângulos que barram as unidades (base das árvores e das construções).
 ## Preenchido no _ready() e só lido depois — as threads leem sem lock.
 var blockers: Array[Rect2] = []
+## Pontos de interesse pros pawns: porta das construções e pé das árvores.
+var building_spots: Array[Vector2] = []
+var tree_spots: Array[Vector2] = []
 
 @onready var water: TileMapLayer = $Water
+@onready var foam: TileMapLayer = $Foam
 @onready var ground: TileMapLayer = $Ground
+@onready var patches: TileMapLayer = $Patches
 @onready var decor: Node2D = $Decor
 @onready var clouds: Node2D = $Clouds
 
@@ -143,7 +168,7 @@ func _ready() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = layout_seed
 	$Ambient.color = ambient
-	_build_ground()
+	_build_ground(rng)
 	_build_decor(rng)
 	_build_clouds(rng)
 
@@ -177,9 +202,10 @@ func add_unit(sprite: UnitSprite) -> void:
 	decor.add_child(sprite)
 
 
-## Dois TileMapLayer de uma célula cada: água no mundo inteiro e a ilha de
-## grama por cima, com a beirada montada do bloco 3x3 do tileset.
-func _build_ground() -> void:
+## Camadas de chão: água no mundo inteiro, espuma cercando a ilha, a ilha de
+## grama e as manchas de grama escura por cima — todas montadas do mesmo bloco
+## 3x3 do tileset, sem terrain set nenhum.
+func _build_ground(rng: RandomNumberGenerator) -> void:
 	var cols := int(WORLD.x) / TILE
 	var rows := int(WORLD.y) / TILE
 	var water_id := _single_tile_set(water, WATER, Vector2i.ZERO)
@@ -187,23 +213,71 @@ func _build_ground() -> void:
 		for x in cols:
 			water.set_cell(Vector2i(x, y), water_id, Vector2i.ZERO)
 
-	var atlas := TileSetAtlasSource.new()
-	atlas.texture = GROUND
-	atlas.texture_region_size = Vector2i(TILE, TILE)
-	for cy in 3:
-		for cx in 3:
-			atlas.create_tile(Vector2i(cx, cy))
-	var tile_set := TileSet.new()
-	tile_set.tile_size = Vector2i(TILE, TILE)
-	var source_id := tile_set.add_source(atlas)
-	ground.tile_set = tile_set
 	var first := int(SHORE) / TILE
 	var last_x := cols - first - 1
 	var last_y := rows - first - 1
-	for y in range(first, last_y + 1):
-		for x in range(first, last_x + 1):
-			ground.set_cell(Vector2i(x, y), source_id,
-					Vector2i(_edge_cell(x, first, last_x), _edge_cell(y, first, last_y)))
+	# A espuma é uma casca de 1 tile em volta da ilha: só a moldura.
+	_fill_block(foam, _block_tile_set(foam, FOAM, FOAM_FRAMES),
+			first - 1, last_x + 1, first - 1, last_y + 1, true)
+	_fill_block(ground, _block_tile_set(ground, GROUND),
+			first, last_x, first, last_y)
+
+	# Manchas de grama escura: quebram o verde chapado sem mudar o mapa.
+	patches.modulate = Color(1, 1, 1, PATCH_ALPHA)
+	var patch_id := _block_tile_set(patches, GRASS_PATCH)
+	for _i in PATCH_COUNT:
+		var rx := rng.randi_range(2, 5)
+		var ry := rng.randi_range(2, 4)
+		_fill_blob(patches, patch_id,
+				rng.randi_range(first + rx, last_x - rx),
+				rng.randi_range(first + ry, last_y - ry), rx, ry, rng)
+
+
+## Mancha em elipse com a borda roída pelo rng: retângulo de tiles se
+## reconhece de longe, isto some no campo.
+func _fill_blob(layer: TileMapLayer, source_id: int, cx: int, cy: int,
+		rx: int, ry: int, rng: RandomNumberGenerator) -> void:
+	for y in range(cy - ry, cy + ry + 1):
+		for x in range(cx - rx, cx + rx + 1):
+			var dx := float(x - cx) / rx
+			var dy := float(y - cy) / ry
+			if dx * dx + dy * dy > 1.0 - rng.randf() * 0.4:
+				continue
+			layer.set_cell(Vector2i(x, y), source_id, PATCH_CELL)
+
+
+## Bloco 3x3 do tileset: borda nas pontas, miolo no meio. `hollow` deixa só a
+## moldura, que é o que a espuma precisa.
+func _fill_block(layer: TileMapLayer, source_id: int, x0: int, x1: int,
+		y0: int, y1: int, hollow := false) -> void:
+	for y in range(y0, y1 + 1):
+		for x in range(x0, x1 + 1):
+			if hollow and x > x0 and x < x1 and y > y0 and y < y1:
+				continue
+			layer.set_cell(Vector2i(x, y), source_id,
+					Vector2i(_edge_cell(x, x0, x1), _edge_cell(y, y0, y1)))
+
+
+## TileSet com as 9 células do bloco. Com `frames > 1` cada célula vira tile
+## animado: os quadros são blocos 3x3 lado a lado, daí a separação de 2.
+func _block_tile_set(layer: TileMapLayer, tex: Texture2D, frames := 1) -> int:
+	var atlas := TileSetAtlasSource.new()
+	atlas.texture = tex
+	atlas.texture_region_size = Vector2i(TILE, TILE)
+	for cy in 3:
+		for cx in 3:
+			var cell := Vector2i(cx, cy)
+			atlas.create_tile(cell)
+			if frames <= 1:
+				continue
+			atlas.set_tile_animation_separation(cell, Vector2i(2, 0))
+			atlas.set_tile_animation_frames_count(cell, frames)
+			for f in frames:
+				atlas.set_tile_animation_frame_duration(cell, f, 1.0 / FOAM_FPS)
+	var tile_set := TileSet.new()
+	tile_set.tile_size = Vector2i(TILE, TILE)
+	layer.tile_set = tile_set
+	return tile_set.add_source(atlas)
 
 
 ## 0 na primeira faixa, 2 na última, o miolo no meio: serve pros dois eixos.
@@ -238,6 +312,7 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 		var size := tex.get_size()
 		blockers.append(Rect2(pos + Vector2(size.x * 0.15, size.y * 0.5),
 				Vector2(size.x * 0.7, size.y * 0.45)))
+		building_spots.append(pos + Vector2(size.x * 0.5, size.y + 20.0))
 	for _i in 60:
 		var tree: Texture2D = TREES[rng.randi() % TREES.size()]
 		var spot := _fit(_edge_spot(rng), tree, TREE_FRAMES)
@@ -246,19 +321,27 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 		var fw := tree.get_width() / TREE_FRAMES
 		blockers.append(Rect2(spot + Vector2(fw * 0.5 - 18.0, tree.get_height() - 38.0),
 				Vector2(36.0, 26.0)))
+		tree_spots.append(spot + Vector2(fw * 0.5, tree.get_height() - 25.0))
 	for _i in 30:
 		var bush: Texture2D = BUSHES[rng.randi() % BUSHES.size()]
 		_add_decor(bush, _fit(_edge_spot(rng), bush, BUSH_FRAMES), BUSH_FRAMES)
+	# Tufos: o mesmo arbusto pequeno, espalhado pelo campo todo. É o que faz a
+	# grama mexer — o balanço já vem no sprite.
+	for _i in TUFT_COUNT:
+		var tuft: Texture2D = BUSHES[rng.randi() % BUSHES.size()]
+		var node := _add_decor(tuft, _fit(_land_spot(rng), tuft, BUSH_FRAMES),
+				BUSH_FRAMES, SWAY_FPS, GROUND_FOOT)
+		node.scale = Vector2.ONE * TUFT_SCALE
 	for _i in 40:
 		var rock: Texture2D = ROCKS[rng.randi() % ROCKS.size()]
-		_add_decor(rock, _fit(_land_spot(rng), rock, 1), 1)
+		_add_decor(rock, _fit(_land_spot(rng), rock, 1), 1, SWAY_FPS, GROUND_FOOT)
 	for _i in 26:
 		var prop: Texture2D = PROPS[rng.randi() % PROPS.size()]
-		_add_decor(prop, _fit(_land_spot(rng), prop, 1), 1)
+		_add_decor(prop, _fit(_land_spot(rng), prop, 1), 1, SWAY_FPS, GROUND_FOOT)
 	# Ouro só nas bordas: no meio ia virar enfeite pisado o tempo todo.
 	for _i in 8:
 		var gold: Texture2D = GOLD_STONES[rng.randi() % GOLD_STONES.size()]
-		_add_decor(gold, _fit(_edge_spot(rng), gold, 1), 1)
+		_add_decor(gold, _fit(_edge_spot(rng), gold, 1), 1, SWAY_FPS, GROUND_FOOT)
 	for _i in 14:
 		_add_decor(WATER_ROCKS[rng.randi() % WATER_ROCKS.size()], _water_spot(rng),
 				WATER_ROCK_FRAMES)
@@ -311,9 +394,14 @@ func _light_texture() -> GradientTexture2D:
 ## Parado vira Sprite2D; animado vira AnimatedSprite2D tocando sozinho, com o
 ## ciclo defasado pelo índice pra as árvores não balançarem em bloco. A
 ## origem do nó fica no pé do quadro: é a linha que o y-sort compara.
-func _add_decor(tex: Texture2D, pos: Vector2, frames: int, fps := SWAY_FPS) -> Node2D:
+func _add_decor(tex: Texture2D, pos: Vector2, frames: int, fps := SWAY_FPS,
+		foot := 1.0) -> Node2D:
 	var node: Node2D
-	var height := tex.get_height()
+	# `foot` é onde está o pé do desenho dentro do quadro. Pedra e tralha são
+	# pequenas e centradas num quadro com folga embaixo: usar a borda do quadro
+	# como linha de ordenação punha o objeto na frente de quem está mais perto
+	# da câmera do que ele.
+	var height := tex.get_height() * foot
 	if frames == 1:
 		var sprite := Sprite2D.new()
 		sprite.texture = tex

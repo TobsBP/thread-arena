@@ -10,7 +10,11 @@ script = ExtResource("1")
 
 [node name="Water" type="TileMapLayer" parent="."]
 
+[node name="Foam" type="TileMapLayer" parent="."]
+
 [node name="Ground" type="TileMapLayer" parent="."]
+
+[node name="Patches" type="TileMapLayer" parent="."]
 
 [node name="Decor" type="Node2D" parent="."]
 
