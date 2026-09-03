@@ -6,6 +6,8 @@ extends RefCounted
 ## que é exclusivo daquele índice -> sem lock.
 
 const SPEED := 260.0
+const BODY_RADIUS := 16.0  ## meia largura da unidade, pra afastar dos blockers
+const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
 
 var pos: Vector2
@@ -101,7 +103,8 @@ func poll_input() -> void:
 
 
 ## Roda na Thread do player.
-func step(delta: float, work_load: int, bounds: Vector2) -> void:
+func step(delta: float, work_load: int, bounds: Vector2,
+		blockers: Array[Rect2] = []) -> void:
 	t_start = Time.get_ticks_usec()
 	var acc := 0.0
 	for k in work_load:
@@ -112,6 +115,7 @@ func step(delta: float, work_load: int, bounds: Vector2) -> void:
 		t_end = Time.get_ticks_usec()
 		return
 	pos = (pos + input * speed * delta).clamp(Vector2(32, 32), bounds - Vector2(32, 32))
+	_push_out(blockers)
 	anim_time += delta
 	_step_attack(delta)
 	if input.x > 0.05:
@@ -119,6 +123,26 @@ func step(delta: float, work_load: int, bounds: Vector2) -> void:
 	elif input.x < -0.05:
 		facing_right = false
 	t_end = Time.get_ticks_usec()
+
+
+## Tira a unidade de dentro dos blockers pelo lado mais perto — sem física:
+## o cenário é só uma lista de Rect2 imutável, lida por todas as threads.
+func _push_out(blockers: Array[Rect2]) -> void:
+	var feet := pos + FEET
+	for r in blockers:
+		var box := r.grow(BODY_RADIUS)
+		if not box.has_point(feet):
+			continue
+		var dx := box.position.x - feet.x if feet.x - box.position.x < box.end.x - feet.x \
+				else box.end.x - feet.x
+		var dy := box.position.y - feet.y if feet.y - box.position.y < box.end.y - feet.y \
+				else box.end.y - feet.y
+		if absf(dx) < absf(dy):
+			pos.x += dx
+			feet.x += dx
+		else:
+			pos.y += dy
+			feet.y += dy
 
 
 ## Um ataque não pode ser cancelado: só reinicia depois do ciclo acabar.

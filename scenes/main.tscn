@@ -2,9 +2,12 @@
 
 [ext_resource type="Script" uid="uid://ctq56gt8uwpgm" path="res://scripts/main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="2"]
+[ext_resource type="PackedScene" path="res://scenes/world/arena_map.tscn" id="3"]
 
 [node name="Main" type="Node2D" unique_id=452181618]
 script = ExtResource("1")
+
+[node name="ArenaMap" parent="." instance=ExtResource("3")]
 
 [node name="Camera" type="Camera2D" parent="." unique_id=1142840172]
 

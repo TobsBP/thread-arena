@@ -51,12 +51,12 @@ var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
 ## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
 var sheep: Array[Player] = []
 var _frame_t0 := 0
-var map := ArenaMap.new()
 ## Medidas retidas por modo (false = serial, true = threads), pra comparar
 ## os dois lado a lado mesmo depois de alternar.
 var fps_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var ms_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 
+@onready var map: ArenaMap = $ArenaMap
 @onready var hud: Control = $UI/HUD
 @onready var cam: Camera2D = $Camera
 
@@ -133,7 +133,7 @@ func _process(delta: float) -> void:
 
 	for s in sheep:
 		s.wander(delta)
-		s.step(delta, 0, bounds)
+		s.step(delta, 0, bounds, map.blockers)
 
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
@@ -161,7 +161,7 @@ func _process(delta: float) -> void:
 
 ## Roda na Thread da unidade i: escreve só em units[i].
 func _step_player(i: int, delta: float, bounds: Vector2) -> void:
-	units[i].step(delta, WORK_LOAD, bounds)
+	units[i].step(delta, WORK_LOAD, bounds, map.blockers)
 
 
 ## Dano e morte: mexe em dois objetos ao mesmo tempo, então roda na main
@@ -196,7 +196,6 @@ func _span_usec() -> int:
 
 
 func _draw() -> void:
-	map.draw_into(self)
 	for s in sheep:
 		_draw_sprite(s)
 	for u in units:

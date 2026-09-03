@@ -10,8 +10,14 @@ controles.
 - `scripts/main.gd` — simulação, alternância serial/threads, medição e input
 - `scenes/hud.tscn` / `scripts/hud.gd` — painel de números e a timeline das
   tarefas; só apresenta, recebe tudo por `update_stats()`
-- `scripts/arena_map.gd` — `ArenaMap`: cenário (chão, construções, árvores,
-  pedras) e o tamanho do mundo; só desenha, não sabe de threads
+- `scenes/world/arena_map.tscn` / `scripts/world/arena_map.gd` — `ArenaMap`:
+  cenário em nós (TileMapLayer de grama + Sprite2D/AnimatedSprite2D de
+  construções, árvores, arbustos e pedras) e o tamanho do mundo (`WORLD`);
+  monta tudo no `_ready()`, não sabe de threads. `z_index = -1` pra ficar atrás
+  das unidades, que `main.gd` ainda desenha no `_draw()`. Expõe `blockers`
+  (`Array[Rect2]` da base das árvores e construções), montado no `_ready()` e
+  só lido depois — as threads leem sem lock, e `Player._push_out()` empurra a
+  unidade pra fora pelo lado mais perto (sem física)
 - `scripts/player.gd` — `Player` (`RefCounted`): input, trabalho pesado e os
   timestamps `t_start`/`t_end` que alimentam o gráfico
 - `project.godot` — `run/main_scene` aponta pra `scenes/main.tscn`
@@ -35,7 +41,11 @@ na main thread e ficam fora de `units` — não entram na comparação serial/th
 
 ## Convenções
 
-- Cenas em `scenes/`, scripts em `scripts/`; caminhos sempre `res://`.
+- Cenas em `scenes/`, scripts em `scripts/`, com as subpastas espelhadas
+  (`scenes/world/` ↔ `scripts/world/`); caminhos sempre `res://`.
+- Cenário é árvore de cena; unidades (players, inimigo, ovelhas) continuam
+  `RefCounted` desenhados no `_draw()` — é o que deixa o `step()` rodar na
+  thread sem tocar na árvore.
 - Paralelismo com `Thread` explícita (`new`/`start`/`wait_to_finish`), 1 por
   player, criada e destruída por frame — a demo existe pra mostrar isso na cara.
   Não trocar por `WorkerThreadPool` sem o custo de criação virar problema.
