@@ -98,9 +98,6 @@ func _process(delta: float) -> void:
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
 		# Uma Thread por player, criada e destruída a cada frame.
-		# start() dispara e volta na hora; o trabalho já está rodando em paralelo.
-		# ponytail: criar thread por frame custa ~50us contra ~3ms de trabalho.
-		# Se WORK_LOAD cair muito, virar pool de threads persistentes + Semaphore.
 		var threads: Array[Thread] = []
 		for i in units.size():
 			var t := Thread.new()
