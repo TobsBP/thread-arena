@@ -19,6 +19,7 @@ const RED_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free
 const ATTACK_RANGE := 90.0
 const ATTACK_DAMAGE := 25.0
 const DEATH_TIME := 0.9  ## tombar + sumir
+const ENEMY_COOLDOWN := 1.2  ## respiro entre golpes do inimigo, em segundos
 const ENEMY_SPEED := 170.0  ## mais lento que os players, senão não tem fuga
 const PURPLE_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Attack1.png")
 const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png")
@@ -127,7 +128,7 @@ func _process(delta: float) -> void:
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
-			u.chase(players)
+			u.chase(players, ATTACK_RANGE, ENEMY_COOLDOWN, delta)
 		else:
 			u.poll_input()
 
@@ -150,6 +151,7 @@ func _process(delta: float) -> void:
 			_step_player(i, delta, bounds)
 
 	_resolve_attacks()
+	_resolve_collisions()
 
 	# lerp: o FPS instantâneo do Godot oscila demais pra ler na tela.
 	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
@@ -165,26 +167,50 @@ func _step_player(i: int, delta: float, bounds: Vector2) -> void:
 
 
 ## Dano e morte: mexe em dois objetos ao mesmo tempo, então roda na main
-## thread depois da barreira — as tarefas continuam sem lock.
+## thread depois da barreira — as tarefas continuam sem lock. Vale pros dois
+## lados: player bate no inimigo e o inimigo bate nos players.
 func _resolve_attacks() -> void:
 	for u in units:
-		if not u.is_enemy:
-			continue
 		if u.is_dead():
-			# ponytail: respawn em vez de remover — a demo precisa do inimigo.
+			# ponytail: respawn em vez de remover — a demo precisa de todos.
 			if u.death_time > DEATH_TIME:
 				u.hp = u.max_hp
 				u.death_time = -1.0
-				u.pos = WORLD * Vector2(0.5, 0.15)
+				u.pos = u.spawn_pos
 			continue
-		for p in players:
-			if p.is_attacking() and not p.attack_hit \
-					and p.pos.distance_to(u.pos) < ATTACK_RANGE:
-				p.attack_hit = true
-				u.hp -= ATTACK_DAMAGE
-				if u.hp <= 0.0:
-					u.hp = 0.0
-					u.death_time = 0.0
+		if not u.is_attacking() or u.attack_hit:
+			continue
+		for v in units:
+			if v.is_enemy == u.is_enemy or v.is_dead():
+				continue
+			if u.pos.distance_to(v.pos) < ATTACK_RANGE:
+				u.attack_hit = true
+				v.hp -= ATTACK_DAMAGE
+				if v.hp <= 0.0:
+					v.hp = 0.0
+					v.death_time = 0.0
+
+
+## Colisão entre unidades (players e inimigo): mexe em dois objetos ao mesmo
+## tempo, então roda na main thread depois da barreira — igual ao dano, as tarefas seguem sem
+## lock. Empurra os dois pela metade da sobreposição, sem física.
+## ponytail: O(n²) com 4 unidades; virar grid só se entrar muita unidade.
+func _resolve_collisions() -> void:
+	for i in units.size():
+		for j in range(i + 1, units.size()):
+			var a := units[i]
+			var b := units[j]
+			if a.is_dead() or b.is_dead():
+				continue
+			var d := b.pos - a.pos
+			var dist := d.length()
+			var overlap := 2.0 * Player.BODY_RADIUS - dist
+			if overlap <= 0.0:
+				continue
+			# Sobrepostos exatamente: qualquer direção serve pra separar.
+			var dir := d / dist if dist > 0.01 else Vector2.RIGHT
+			a.pos -= dir * overlap * 0.5
+			b.pos += dir * overlap * 0.5
 
 
 ## Duração total do trecho de trabalho, do dispatch ao último player terminar.

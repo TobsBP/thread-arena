@@ -11,6 +11,7 @@ const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
 
 var pos: Vector2
+var spawn_pos: Vector2  ## volta pra cá ao renascer
 var color: Color
 var keys: PackedInt32Array  ## [cima, baixo, esquerda, direita, atacar] (physical keycodes)
 var joy_device: int
@@ -19,7 +20,7 @@ var is_enemy := false
 var input := Vector2.ZERO  ## escrito na main thread, lido na thread do player
 var heat := 0.0  ## resultado do trabalho pesado, só pra provar que rodou
 var max_hp := 100.0
-var hp := 100.0  ## por enquanto só o HUD lê; nada tira vida ainda
+var hp := 100.0  ## dano em main.gd (_resolve_attacks), depois da barreira
 var t_start := 0  ## usec, início do step -> alimenta o gráfico
 var t_end := 0
 
@@ -33,6 +34,7 @@ var attack_frames := 4
 var attack_pressed := false
 var attack_time := -1.0  ## < 0 = não está atacando
 var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
+var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
 var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
 var frame_size := Vector2(192, 192)
 var anim_fps := 10.0
@@ -55,6 +57,7 @@ func _init(
 	a_frames := 4,
 ) -> void:
 	pos = start_pos
+	spawn_pos = start_pos
 	color = col
 	keys = PackedInt32Array(key_list)
 	joy_device = device
@@ -66,14 +69,31 @@ func _init(
 	attack_frames = a_frames
 
 
-## IA do inimigo: roda na main thread junto com o poll, só escreve `input`.
-## Persegue o alvo mais próximo — a thread depois só aplica o movimento.
-func chase(targets: Array[Player]) -> void:
+## IA do inimigo: roda na main thread junto com o poll, só escreve `input` e
+## `attack_pressed`. Persegue o alvo vivo mais próximo e, chegando no alcance,
+## para e bate, respeitando o cooldown — a thread depois só aplica o movimento
+## e a animação.
+func chase(targets: Array[Player], attack_range: float, cooldown: float,
+		delta: float) -> void:
+	attack_cd = maxf(attack_cd - delta, 0.0)
 	var best: Player = null
 	for t in targets:
+		if t.is_dead():
+			continue
 		if best == null or pos.distance_squared_to(t.pos) < pos.distance_squared_to(best.pos):
 			best = t
-	input = Vector2.ZERO if best == null else (best.pos - pos).normalized()
+	if best == null:
+		input = Vector2.ZERO
+		attack_pressed = false
+		return
+	var to_target := best.pos - pos
+	var in_range := to_target.length() < attack_range
+	attack_pressed = in_range and attack_cd <= 0.0
+	if attack_pressed:
+		attack_cd = cooldown
+	input = Vector2.ZERO if in_range else to_target.normalized()
+	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
+	facing_right = to_target.x >= 0.0
 
 
 ## Ovelhas: rumo aleatório trocado a cada poucos segundos (main thread,

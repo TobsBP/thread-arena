@@ -28,13 +28,15 @@ mesmo índice (device 0/1/2). `[ESPAÇO]` alterna serial/threads.
 
 Além deles há 1 inimigo vermelho (`is_enemy`) que persegue o player mais
 próximo. Ele não tem input: a IA roda na main thread (`Player.chase()`) e só
-escreve `input`. `units` = players + inimigo é o que vira Thread; `players` são
+escreve `input`/`attack_pressed`. `units` = players + inimigo é o que vira Thread; `players` são
 só os controláveis (usados pela câmera).
 
-Ataque de player em alcance tira vida do inimigo (1 acerto por golpe); a zero
-ele tomba e some (`death_time`), e volta inteiro no ponto de spawn. Dano toca
-dois objetos, então `_resolve_attacks()` roda na main thread depois da barreira
-— as tarefas seguem sem lock.
+Ataque em alcance tira vida do outro lado (1 acerto por golpe), nos dois
+sentidos: player bate no inimigo e o inimigo bate nos players — a IA para de
+andar e ataca quando chega em `ATTACK_RANGE`. A zero de vida a unidade tomba e
+some (`death_time`), e volta inteira no `spawn_pos`. Dano e colisão entre
+unidades tocam dois objetos, então `_resolve_attacks()` e `_resolve_collisions()`
+rodam na main thread depois da barreira — as tarefas seguem sem lock.
 
 Ovelhas (`sheep`) são cenário vivo: andam a esmo via `Player.wander()`, rodam
 na main thread e ficam fora de `units` — não entram na comparação serial/threads.
