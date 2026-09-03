@@ -25,6 +25,9 @@ próximo. Ele não tem input: a IA roda na main thread (`Player.chase()`) e só
 escreve `input`. `units` = players + inimigo é o que vira Thread; `players` são
 só os controláveis (usados pela câmera).
 
+Ovelhas (`sheep`) são cenário vivo: andam a esmo via `Player.wander()`, rodam
+na main thread e ficam fora de `units` — não entram na comparação serial/threads.
+
 ## Convenções
 
 - Cenas em `scenes/`, scripts em `scripts/`; caminhos sempre `res://`.

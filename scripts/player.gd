@@ -34,6 +34,7 @@ var frame_size := Vector2(192, 192)
 var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
+var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
 
 
 func _init(
@@ -68,6 +69,15 @@ func chase(targets: Array[Player]) -> void:
 		if best == null or pos.distance_squared_to(t.pos) < pos.distance_squared_to(best.pos):
 			best = t
 	input = Vector2.ZERO if best == null else (best.pos - pos).normalized()
+
+
+## Ovelhas: rumo aleatório trocado a cada poucos segundos (main thread,
+## junto com o poll dos players). A thread depois só aplica o movimento.
+func wander(delta: float) -> void:
+	wander_time -= delta
+	if wander_time <= 0.0:
+		wander_time = randf_range(1.0, 3.0)
+		input = Vector2.ZERO if randf() < 0.35 else Vector2.RIGHT.rotated(randf() * TAU)
 
 
 ## Main thread only: a classe Input não é thread-safe.

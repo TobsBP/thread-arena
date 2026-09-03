@@ -22,6 +22,11 @@ const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (
 const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
 const YELLOW_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Attack1.png")
 
+const SHEEP_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Idle.png")
+const SHEEP_MOVE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Move.png")
+const SHEEP_COUNT := 8
+const SHEEP_SPEED := 45.0
+
 ## Mundo maior que a janela; a câmera enquadra os três players.
 const WORLD := ArenaMap.WORLD
 const CAM_MARGIN := 300.0  ## folga em volta dos players ao enquadrar
@@ -30,6 +35,8 @@ const CAM_MARGIN := 300.0  ## folga em volta dos players ao enquadrar
 
 var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes)
 var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
+## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
+var sheep: Array[Player] = []
 var _frame_t0 := 0
 var map := ArenaMap.new()
 ## Medidas retidas por modo (false = serial, true = threads), pra comparar
@@ -47,6 +54,7 @@ func _ready() -> void:
 	Engine.max_fps = 0
 	_spawn_players()
 	_spawn_enemy()
+	_spawn_sheep()
 	# Câmera presa ao mundo: nunca mostra fora do chão desenhado.
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
@@ -86,6 +94,18 @@ func _spawn_enemy() -> void:
 	units.append(e)
 
 
+## Ovelhas espalhadas pelo mundo: só decoração viva, sem input nem thread.
+func _spawn_sheep() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20260902
+	for _i in SHEEP_COUNT:
+		var s := Player.new(Vector2(rng.randf(), rng.randf()) * WORLD, Color.WHITE,
+				[0, 0, 0, 0, 0], -1, SHEEP_IDLE, SHEEP_MOVE, null, 6, 4, 0)
+		s.frame_size = Vector2(128, 128)
+		s.speed = SHEEP_SPEED
+		sheep.append(s)
+
+
 func _process(delta: float) -> void:
 	var bounds := WORLD
 	for u in units:
@@ -94,6 +114,10 @@ func _process(delta: float) -> void:
 			u.chase(players)
 		else:
 			u.poll_input()
+
+	for s in sheep:
+		s.wander(delta)
+		s.step(delta, 0, bounds)
 
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
@@ -133,6 +157,8 @@ func _span_usec() -> int:
 
 func _draw() -> void:
 	map.draw_into(self)
+	for s in sheep:
+		_draw_sprite(s)
 	for u in units:
 		_draw_player(u)
 
@@ -152,30 +178,32 @@ func _update_camera() -> void:
 	cam.position = cam.position.lerp(box.get_center(), 0.12)
 
 
-func _draw_player(p: Player) -> void:
-	# 1. Sombra elíptica sob os pés
-	var shadow_pos := p.pos + Vector2(0, 36)
-	draw_set_transform(shadow_pos, 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	# 2. Sprite animado do guerreiro com flip horizontal ao virar para a esquerda
+## Sprite animado, com flip ao virar pra esquerda. Serve players, inimigo e
+## ovelhas — sombra e HUD do player ficam em _draw_player().
+func _draw_sprite(p: Player) -> void:
 	var tex := p.get_current_texture()
 	if tex:
-		var frame := p.get_current_frame()
 		var fw := p.frame_size.x
 		var fh := p.frame_size.y
-		var src_rect := Rect2(frame * fw, 0, fw, fh)
+		var src_rect := Rect2(p.get_current_frame() * fw, 0, fw, fh)
 		var dest_rect := Rect2(-fw * 0.5, -fh * 0.5, fw, fh)
-		var flip_scale := Vector2(1.0 if p.facing_right else -1.0, 1.0)
-
-		draw_set_transform(p.pos, 0.0, flip_scale)
+		draw_set_transform(p.pos, 0.0, Vector2(1.0 if p.facing_right else -1.0, 1.0))
 		draw_texture_rect_region(tex, dest_rect, src_rect)
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	else:
 		draw_circle(p.pos, RADIUS, p.color)
 
-	# 3. Barra de HP acima da cabeça
+
+func _draw_player(p: Player) -> void:
+	# 1. Sombra elíptica sob os pés (as ovelhas já vêm com a sua no sprite)
+	var shadow_pos := p.pos + Vector2(0, 36)
+	draw_set_transform(shadow_pos, 0.0, Vector2(1.0, 0.35))
+	draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+	_draw_sprite(p)
+
+	# 2. Barra de HP acima da cabeça
 	var bar := Rect2(p.pos + Vector2(-24, -76), Vector2(48, 7))
 	draw_rect(bar, Color(0.05, 0.06, 0.08, 0.85), true)
 	var ratio := clampf(p.hp / p.max_hp, 0.0, 1.0)
@@ -184,7 +212,7 @@ func _draw_player(p: Player) -> void:
 		draw_rect(fill, Color(0.85, 0.25, 0.25).lerp(Color(0.35, 0.8, 0.35), ratio), true)
 	draw_rect(bar, p.color, false, 1.0)
 
-	# 4. Badge identificador do player (P1, P2, P3) acima da cabeça
+	# 3. Badge identificador do player (P1, P2, P3) acima da cabeça
 	var badge_size := Vector2(26, 16)
 	var badge_pos := p.pos + Vector2(-badge_size.x * 0.5, -58)
 	var badge_rect := Rect2(badge_pos, badge_size)
