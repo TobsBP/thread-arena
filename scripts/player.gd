@@ -6,9 +6,15 @@ extends RefCounted
 ## que é exclusivo daquele índice -> sem lock.
 
 const SPEED := 260.0
+const BODY_RADIUS := 16.0  ## meia largura da unidade, pra afastar dos blockers
+const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
+const DEATH_TIME := 0.9  ## tombar + sumir
+const WORK_PAUSE := 2.2  ## pawn: segundos parado no serviço e na entrega
+const WORK_REACH := 60.0  ## perto o bastante do toco/da base pra parar
 
 var pos: Vector2
+var spawn_pos: Vector2  ## volta pra cá ao renascer
 var color: Color
 var keys: PackedInt32Array  ## [cima, baixo, esquerda, direita, atacar] (physical keycodes)
 var joy_device: int
@@ -17,7 +23,7 @@ var is_enemy := false
 var input := Vector2.ZERO  ## escrito na main thread, lido na thread do player
 var heat := 0.0  ## resultado do trabalho pesado, só pra provar que rodou
 var max_hp := 100.0
-var hp := 100.0  ## por enquanto só o HUD lê; nada tira vida ainda
+var hp := 100.0  ## dano em main.gd (_resolve_attacks), depois da barreira
 var t_start := 0  ## usec, início do step -> alimenta o gráfico
 var t_end := 0
 
@@ -30,10 +36,21 @@ var attack_frames := 4
 ## Ataque: começa no poll (main thread) e roda até o ciclo terminar.
 var attack_pressed := false
 var attack_time := -1.0  ## < 0 = não está atacando
+var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
+var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
+var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
 var frame_size := Vector2(192, 192)
 var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
+var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
+## Pawn: vai do serviço à base e volta, carregando a carga na ida de volta.
+var work_site := Vector2.ZERO
+var work_home := Vector2.ZERO
+var work_timer := 0.0
+var carrying := false
+var loaded_texture: Texture2D  ## sprite de corrida com a carga nas costas
+var ribbon_y := 68.0  ## linha da faixa em SmallRibbons.png (cor do badge)
 
 
 func _init(
@@ -49,6 +66,7 @@ func _init(
 	a_frames := 4,
 ) -> void:
 	pos = start_pos
+	spawn_pos = start_pos
 	color = col
 	keys = PackedInt32Array(key_list)
 	joy_device = device
@@ -60,14 +78,61 @@ func _init(
 	attack_frames = a_frames
 
 
-## IA do inimigo: roda na main thread junto com o poll, só escreve `input`.
-## Persegue o alvo mais próximo — a thread depois só aplica o movimento.
-func chase(targets: Array[Player]) -> void:
+## IA do inimigo: roda na main thread junto com o poll, só escreve `input` e
+## `attack_pressed`. Persegue o alvo vivo mais próximo e, chegando no alcance,
+## para e bate, respeitando o cooldown — a thread depois só aplica o movimento
+## e a animação.
+func chase(targets: Array[Player], attack_range: float, cooldown: float,
+		delta: float) -> void:
+	attack_cd = maxf(attack_cd - delta, 0.0)
 	var best: Player = null
 	for t in targets:
+		if t.is_dead():
+			continue
 		if best == null or pos.distance_squared_to(t.pos) < pos.distance_squared_to(best.pos):
 			best = t
-	input = Vector2.ZERO if best == null else (best.pos - pos).normalized()
+	if best == null:
+		input = Vector2.ZERO
+		attack_pressed = false
+		return
+	var to_target := best.pos - pos
+	var in_range := to_target.length() < attack_range
+	attack_pressed = in_range and attack_cd <= 0.0
+	if attack_pressed:
+		attack_cd = cooldown
+	input = Vector2.ZERO if in_range else to_target.normalized()
+	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
+	facing_right = to_target.x >= 0.0
+
+
+## Ovelhas: rumo aleatório trocado a cada poucos segundos (main thread,
+## junto com o poll dos players). A thread depois só aplica o movimento.
+func wander(delta: float) -> void:
+	wander_time -= delta
+	if wander_time <= 0.0:
+		wander_time = randf_range(1.0, 3.0)
+		input = Vector2.ZERO if randf() < 0.35 else Vector2.RIGHT.rotated(randf() * TAU)
+
+
+## Pawn: anda até o serviço, martela um tempo, leva a carga pra base e volta.
+## Roda na main thread junto com o poll e só escreve `input`/`attack_pressed`
+## — a animação de trabalho é a de ataque, que já existe.
+func haul(delta: float) -> void:
+	if work_timer > 0.0:
+		work_timer -= delta
+		input = Vector2.ZERO
+		attack_pressed = not carrying  # machado no toco; na base só entrega
+		if work_timer <= 0.0:
+			carrying = not carrying
+		return
+	attack_pressed = false
+	var to_target := (work_home if carrying else work_site) - pos
+	if to_target.length() < WORK_REACH:
+		work_timer = WORK_PAUSE
+		input = Vector2.ZERO
+		return
+	input = to_target.normalized()
+	facing_right = to_target.x >= 0.0
 
 
 ## Main thread only: a classe Input não é thread-safe.
@@ -87,14 +152,21 @@ func poll_input() -> void:
 			or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_A))
 
 
-## Roda na Thread do player.
-func step(delta: float, work_load: int, bounds: Vector2) -> void:
+## Roda na Thread do player. `area` é a faixa andável (ArenaMap.PLAY_AREA):
+## fora dela é beirada de ilha ou água.
+func step(delta: float, work_load: int, area: Rect2,
+		blockers: Array[Rect2] = []) -> void:
 	t_start = Time.get_ticks_usec()
 	var acc := 0.0
 	for k in work_load:
 		acc += sqrt(float(k) + pos.x)
 	heat = fmod(acc, 1.0)
-	pos = (pos + input * speed * delta).clamp(Vector2(32, 32), bounds - Vector2(32, 32))
+	if is_dead():
+		death_time += delta
+		t_end = Time.get_ticks_usec()
+		return
+	pos = (pos + input * speed * delta).clamp(area.position, area.end)
+	_push_out(blockers)
 	anim_time += delta
 	_step_attack(delta)
 	if input.x > 0.05:
@@ -102,6 +174,26 @@ func step(delta: float, work_load: int, bounds: Vector2) -> void:
 	elif input.x < -0.05:
 		facing_right = false
 	t_end = Time.get_ticks_usec()
+
+
+## Tira a unidade de dentro dos blockers pelo lado mais perto — sem física:
+## o cenário é só uma lista de Rect2 imutável, lida por todas as threads.
+func _push_out(blockers: Array[Rect2]) -> void:
+	var feet := pos + FEET
+	for r in blockers:
+		var box := r.grow(BODY_RADIUS)
+		if not box.has_point(feet):
+			continue
+		var dx := box.position.x - feet.x if feet.x - box.position.x < box.end.x - feet.x \
+				else box.end.x - feet.x
+		var dy := box.position.y - feet.y if feet.y - box.position.y < box.end.y - feet.y \
+				else box.end.y - feet.y
+		if absf(dx) < absf(dy):
+			pos.x += dx
+			feet.x += dx
+		else:
+			pos.y += dy
+			feet.y += dy
 
 
 ## Um ataque não pode ser cancelado: só reinicia depois do ciclo acabar.
@@ -112,6 +204,11 @@ func _step_attack(delta: float) -> void:
 			attack_time = -1.0
 	elif attack_pressed:
 		attack_time = 0.0
+		attack_hit = false
+
+
+func is_dead() -> bool:
+	return death_time >= 0.0
 
 
 func is_attacking() -> bool:
@@ -125,7 +222,9 @@ func is_running() -> bool:
 func get_current_texture() -> Texture2D:
 	if is_attacking() and attack_texture:
 		return attack_texture
-	return run_texture if is_running() else idle_texture
+	if not is_running():
+		return idle_texture
+	return loaded_texture if carrying and loaded_texture else run_texture
 
 
 func get_current_frame() -> int:
