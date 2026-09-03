@@ -10,13 +10,20 @@ controles.
 - `scripts/main.gd` — simulação, alternância serial/threads, medição e input
 - `scenes/hud.tscn` / `scripts/hud.gd` — painel de números e a timeline das
   tarefas; só apresenta, recebe tudo por `update_stats()`
+- `scripts/arena_map.gd` — `ArenaMap`: cenário (chão, construções, árvores,
+  pedras) e o tamanho do mundo; só desenha, não sabe de threads
 - `scripts/player.gd` — `Player` (`RefCounted`): input, trabalho pesado e os
   timestamps `t_start`/`t_end` que alimentam o gráfico
 - `project.godot` — `run/main_scene` aponta pra `scenes/main.tscn`
 
-São 3 players controláveis: P1 WASD, P2 setas, P3 IJKL, cada um somando o
-analógico esquerdo do controle de mesmo índice (device 0/1/2). `[ESPAÇO]`
-alterna serial/threads.
+São 3 players controláveis: P1 WASD+F, P2 setas+num0, P3 IJKL+O (a última tecla
+é o ataque), cada um somando o analógico esquerdo e o botão A do controle de
+mesmo índice (device 0/1/2). `[ESPAÇO]` alterna serial/threads.
+
+Além deles há 1 inimigo vermelho (`is_enemy`) que persegue o player mais
+próximo. Ele não tem input: a IA roda na main thread (`Player.chase()`) e só
+escreve `input`. `units` = players + inimigo é o que vira Thread; `players` são
+só os controláveis (usados pela câmera).
 
 ## Convenções
 

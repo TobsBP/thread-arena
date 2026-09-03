@@ -1,6 +1,6 @@
 extends Control
 
-## HUD: painel de números, timeline das tarefas e um histórico por player.
+## HUD: painel de números, timeline das tarefas e um histórico por unidade.
 ## Só apresenta — quem mede e guarda os tempos é o main.
 
 const DIM := "#7d8590"
@@ -13,19 +13,19 @@ const LINE := Color(1, 1, 1, 0.12)
 const TEXT := Color(0.49, 0.53, 0.59)
 
 const WIDTH := 460.0
-const GRAPH_H := 96.0   ## timeline do frame atual
-const HIST_H := 108.0   ## histórico por player
 const GAP := 22.0
-const BAR_H := 20.0
-const SAMPLES := 90  ## ~frames guardados por player
+const BAR_H := 20.0     ## barra da timeline
+const LANE_H := 26.0    ## faixa do histórico
+const PAD := 10.0
+const SAMPLES := 90  ## ~frames guardados por unidade
 
 var _use_threads := false
 var _ms: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _fps: Dictionary[bool, float] = {false: 0.0, true: 0.0}
-var _players: Array[Player] = []
+var _units: Array[Player] = []
 var _frame_t0 := 0
 var _history: Array[PackedFloat32Array] = []
-## StyleBox por player: só pra ter canto arredondado sem realocar por frame.
+## StyleBox por unidade: só pra ter canto arredondado sem realocar por frame.
 var _bars: Array[StyleBoxFlat] = []
 ## 0 = tudo, 1 = só o painel de números, 2 = nada. Alterna com [H].
 var detail := 0
@@ -58,13 +58,13 @@ func update_stats(
 	use_threads: bool,
 	ms: Dictionary[bool, float],
 	fps: Dictionary[bool, float],
-	players: Array[Player],
+	units: Array[Player],
 	frame_t0: int,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
 	_fps = fps
-	_players = players
+	_units = units
 	_frame_t0 = frame_t0
 	_record()
 
@@ -85,14 +85,14 @@ func update_stats(
 	queue_redraw()
 
 
-## Janela deslizante do tempo de cada player, alimenta os mini-gráficos.
+## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
 func _record() -> void:
-	while _history.size() < _players.size():
+	while _history.size() < _units.size():
 		_history.append(PackedFloat32Array())
 		_bars.append(_bar_box())
-	for i in _players.size():
+	for i in _units.size():
 		var h := _history[i]
-		h.append((_players[i].t_end - _players[i].t_start) / 1000.0)
+		h.append((_units[i].t_end - _units[i].t_start) / 1000.0)
 		if h.size() > SAMPLES:
 			h.remove_at(0)
 		_history[i] = h
@@ -107,7 +107,7 @@ func _bar_box() -> StyleBoxFlat:
 func _mode_title() -> String:
 	if _use_threads:
 		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas[/font_size]" % [
-			GOOD, _players.size(),
+			GOOD, _units.size(),
 		]
 	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread[/font_size]" % BAD
 
@@ -126,9 +126,13 @@ func _draw() -> void:
 	if detail != 0:
 		return
 	# Layout a partir da altura real do painel: ele cresce com o texto.
+	# Altura vem do número de unidades: entra/sai inimigo sem quebrar o layout.
+	var n := maxf(_units.size(), 1)
 	var y := info.size.y + GAP
-	_draw_timeline(Rect2(0, y, WIDTH, GRAPH_H))
-	_draw_history(Rect2(0, y + GRAPH_H + GAP + 10, WIDTH, HIST_H))
+	var timeline_h := PAD + n * (BAR_H + 6)
+	var hist_h := PAD + n * (LANE_H + 4)
+	_draw_timeline(Rect2(0, y, WIDTH, timeline_h))
+	_draw_history(Rect2(0, y + timeline_h + GAP + PAD, WIDTH, hist_h))
 
 
 func _frame(rect: Rect2, title: String) -> void:
@@ -141,7 +145,7 @@ func _frame(rect: Rect2, title: String) -> void:
 	)
 
 
-## Timeline: uma barra por player, no instante real de start/end.
+## Timeline: uma barra por unidade (players + inimigo), no start/end real.
 ## Serial -> barras em escada. Threads -> barras empilhadas no mesmo x.
 func _draw_timeline(rect: Rect2) -> void:
 	# Escala fixa = pior modo medido, pros dois modos serem comparáveis a olho:
@@ -165,8 +169,8 @@ func _draw_timeline(rect: Rect2) -> void:
 			Color(1, 1, 1, 0.45), 1.0, 4.0,
 		)
 
-	for i in _players.size():
-		var p := _players[i]
+	for i in _units.size():
+		var p := _units[i]
 		var y := 10 + i * (BAR_H + 6)
 		var x0 := float(p.t_start - _frame_t0) / span
 		var x1 := minf(float(p.t_end - _frame_t0) / span, 1.0)
@@ -183,13 +187,20 @@ func _draw_timeline(rect: Rect2) -> void:
 		draw_style_box(_bars[i], bar)
 		draw_string(
 			ThemeDB.fallback_font, bar.position + Vector2(6, BAR_H - 6),
-			"P%d  %.2f ms" % [i + 1, (p.t_end - p.t_start) / 1000.0],
+			"%s  %.2f ms" % [_label(i), (p.t_end - p.t_start) / 1000.0],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0, 0, 0, 0.75),
 		)
 
 
-## Um mini-gráfico por player: tempo dele nos últimos SAMPLES frames.
-## Alternar o modo faz o degrau aparecer nos três ao mesmo tempo.
+## Rótulo da faixa: os controláveis são P1..Pn, o inimigo é E.
+func _label(i: int) -> String:
+	if i < _units.size() and _units[i].is_enemy:
+		return "E "
+	return "P%d" % (i + 1)
+
+
+## Um mini-gráfico por unidade: tempo dela nos últimos SAMPLES frames.
+## Alternar o modo faz o degrau aparecer em todas ao mesmo tempo.
 func _peak() -> float:
 	var peak := 0.001
 	for h in _history:
@@ -199,11 +210,11 @@ func _peak() -> float:
 
 
 func _draw_history(rect: Rect2) -> void:
-	_frame(rect, "por player, últimos %d frames  (escala: pico %.2f ms)" % [
+	_frame(rect, "por thread, últimos %d frames  (escala: pico %.2f ms)" % [
 		SAMPLES, _peak(),
 	])
 	var peak := _peak()
-	var lane_h := (rect.size.y - 8) / maxf(_players.size(), 1) - 4
+	var lane_h := LANE_H
 	for i in _history.size():
 		var h := _history[i]
 		var top := rect.position + Vector2(0, 4 + i * (lane_h + 4))
@@ -218,10 +229,10 @@ func _draw_history(rect: Rect2) -> void:
 			var fill := pts.duplicate()
 			fill.append(top + Vector2(rect.size.x, lane_h))
 			fill.append(top + Vector2(0, lane_h))
-			draw_colored_polygon(fill, Color(_players[i].color, 0.22))
-			draw_polyline(pts, _players[i].color, 1.5, true)
+			draw_colored_polygon(fill, Color(_units[i].color, 0.22))
+			draw_polyline(pts, _units[i].color, 1.5, true)
 		draw_string(
 			ThemeDB.fallback_font, top + Vector2(6, lane_h - 5),
-			"P%d  %.2f ms" % [i + 1, h[-1] if not h.is_empty() else 0.0],
+			"%s  %.2f ms" % [_label(i), h[-1] if not h.is_empty() else 0.0],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 11, TEXT,
 		)
