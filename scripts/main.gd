@@ -5,7 +5,6 @@ extends Node2D
 ## Modo threads -> 1 Thread por player, elas rodam sobrepostas.
 ## Quem mostra os números é scenes/hud.tscn.
 
-const RADIUS := 20.0
 const WORK_LOAD := 40000  ## iterações de trabalho falso por player
 
 const BLUE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png")
@@ -18,7 +17,6 @@ const RED_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free
 const RED_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Attack1.png")
 const ATTACK_RANGE := 90.0
 const ATTACK_DAMAGE := 25.0
-const DEATH_TIME := 0.9  ## tombar + sumir
 const ENEMY_COOLDOWN := 1.2  ## respiro entre golpes do inimigo, em segundos
 const ENEMY_SPEED := 170.0  ## mais lento que os players, senão não tem fuga
 const PURPLE_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Attack1.png")
@@ -26,23 +24,14 @@ const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (
 const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
 const YELLOW_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Attack1.png")
 
-## HUD dos players, do pack: barra de vida + faixa com o nome.
-const UI_BAR := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Bars/SmallBar_Base.png")
-const UI_BAR_FILL := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Bars/SmallBar_Fill.png")
-const UI_RIBBON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Ribbons/SmallRibbons.png")
-## Recortes: as duas texturas têm as pontas nas bordas e o miolo em x 128..192.
-const BAR_SRC := Rect2(49, 22, 222, 19)
-const BAR_CAP := 15.0
-const RIBBON_SIZE := Vector2(315, 54)  ## faixa arredondada; o y muda por cor
-const RIBBON_CAP := 62.0
-
-const SHEEP_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Idle.png")
+const SHEEP_GRAZE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Grass.png")
 const SHEEP_MOVE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Move.png")
-const SHEEP_COUNT := 12
+const SHEEP_COUNT := 18
 const SHEEP_SPEED := 45.0
 
 ## Mundo maior que a janela; a câmera enquadra os três players.
 const WORLD := ArenaMap.WORLD
+const PLAY_AREA := ArenaMap.PLAY_AREA
 const CAM_MARGIN := 300.0  ## folga em volta dos players ao enquadrar
 
 @export var use_threads := false
@@ -51,6 +40,8 @@ var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes
 var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
 ## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
 var sheep: Array[Player] = []
+## Tudo que se esbarra: units + sheep, montado uma vez no _ready().
+var bodies: Array[Player] = []
 var _frame_t0 := 0
 ## Medidas retidas por modo (false = serial, true = threads), pra comparar
 ## os dois lado a lado mesmo depois de alternar.
@@ -69,6 +60,14 @@ func _ready() -> void:
 	_spawn_players()
 	_spawn_enemy()
 	_spawn_sheep()
+	bodies.assign(units)
+	bodies.append_array(sheep)
+	# Cada unidade ganha um nó de desenho dentro do cenário y-sorted: é o que
+	# faz o player passar atrás da árvore. O dado segue RefCounted.
+	for u in units:
+		map.add_unit(UnitSprite.create(u))
+	for s in sheep:
+		map.add_unit(UnitSprite.create(s, false))
 	# Câmera presa ao mundo: nunca mostra fora do chão desenhado.
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
@@ -78,7 +77,7 @@ func _ready() -> void:
 ## P1 WASD + F, P2 setas + num0, P3 IJKL + O — cada um somando o controle
 ## de mesmo índice (ataque também no botão A do gamepad).
 func _spawn_players() -> void:
-	var size := WORLD
+	var size := PLAY_AREA.size
 	var setups := [
 		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D, KEY_F], BLUE_IDLE, BLUE_RUN, BLUE_ATK, 68.0],
 		# roxo no lugar do vermelho: vermelho fica reservado pros inimigos
@@ -86,7 +85,8 @@ func _spawn_players() -> void:
 		[Color(0.96, 0.78, 0.22), [KEY_I, KEY_K, KEY_J, KEY_L, KEY_O], YELLOW_IDLE, YELLOW_RUN, YELLOW_ATK, 324.0],
 	]
 	for i in setups.size():
-		var spot := Vector2(size.x * (i + 1) / (setups.size() + 1), size.y * 0.5)
+		var spot := PLAY_AREA.position + Vector2(
+				size.x * (i + 1) / (setups.size() + 1), size.y * 0.5)
 		var p := Player.new(
 			spot,
 			setups[i][0],
@@ -103,28 +103,28 @@ func _spawn_players() -> void:
 
 ## Um inimigo vermelho no meio do mundo: mais uma Thread no mesmo esquema.
 func _spawn_enemy() -> void:
-	var e := Player.new(WORLD * Vector2(0.5, 0.15), Color(0.85, 0.25, 0.25),
-			[0, 0, 0, 0, 0], -1, RED_IDLE, RED_RUN, RED_ATK)
+	var e := Player.new(PLAY_AREA.position + PLAY_AREA.size * Vector2(0.5, 0.12),
+			Color(0.85, 0.25, 0.25), [0, 0, 0, 0, 0], -1, RED_IDLE, RED_RUN, RED_ATK)
 	e.is_enemy = true
 	e.ribbon_y = 196.0  ## faixa vermelha
 	e.speed = ENEMY_SPEED
 	units.append(e)
 
 
-## Ovelhas espalhadas pelo mundo: só decoração viva, sem input nem thread.
+## Ovelhas espalhadas pela ilha: só decoração viva, sem input nem thread.
 func _spawn_sheep() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 20260902
 	for _i in SHEEP_COUNT:
-		var s := Player.new(Vector2(rng.randf(), rng.randf()) * WORLD, Color.WHITE,
-				[0, 0, 0, 0, 0], -1, SHEEP_IDLE, SHEEP_MOVE, null, 6, 4, 0)
+		var spot := PLAY_AREA.position + Vector2(rng.randf(), rng.randf()) * PLAY_AREA.size
+		var s := Player.new(spot, Color.WHITE, [0, 0, 0, 0, 0], -1,
+				SHEEP_GRAZE, SHEEP_MOVE, null, 12, 4, 0)
 		s.frame_size = Vector2(128, 128)
 		s.speed = SHEEP_SPEED
 		sheep.append(s)
 
 
 func _process(delta: float) -> void:
-	var bounds := WORLD
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
@@ -134,7 +134,7 @@ func _process(delta: float) -> void:
 
 	for s in sheep:
 		s.wander(delta)
-		s.step(delta, 0, bounds, map.blockers)
+		s.step(delta, 0, PLAY_AREA, map.blockers)
 
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
@@ -142,13 +142,13 @@ func _process(delta: float) -> void:
 		var threads: Array[Thread] = []
 		for i in units.size():
 			var t := Thread.new()
-			t.start(_step_player.bind(i, delta, bounds))
+			t.start(_step_player.bind(i, delta))
 			threads.append(t)
 		for t in threads:
 			t.wait_to_finish()
 	else:
 		for i in units.size():
-			_step_player(i, delta, bounds)
+			_step_player(i, delta)
 
 	_resolve_attacks()
 	_resolve_collisions()
@@ -158,12 +158,11 @@ func _process(delta: float) -> void:
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera()
 	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0)
-	queue_redraw()
 
 
 ## Roda na Thread da unidade i: escreve só em units[i].
-func _step_player(i: int, delta: float, bounds: Vector2) -> void:
-	units[i].step(delta, WORK_LOAD, bounds, map.blockers)
+func _step_player(i: int, delta: float) -> void:
+	units[i].step(delta, WORK_LOAD, PLAY_AREA, map.blockers)
 
 
 ## Dano e morte: mexe em dois objetos ao mesmo tempo, então roda na main
@@ -173,7 +172,7 @@ func _resolve_attacks() -> void:
 	for u in units:
 		if u.is_dead():
 			# ponytail: respawn em vez de remover — a demo precisa de todos.
-			if u.death_time > DEATH_TIME:
+			if u.death_time > Player.DEATH_TIME:
 				u.hp = u.max_hp
 				u.death_time = -1.0
 				u.pos = u.spawn_pos
@@ -191,15 +190,15 @@ func _resolve_attacks() -> void:
 					v.death_time = 0.0
 
 
-## Colisão entre unidades (players e inimigo): mexe em dois objetos ao mesmo
-## tempo, então roda na main thread depois da barreira — igual ao dano, as tarefas seguem sem
-## lock. Empurra os dois pela metade da sobreposição, sem física.
-## ponytail: O(n²) com 4 unidades; virar grid só se entrar muita unidade.
+## Colisão entre corpos (players, inimigo e ovelhas): mexe em dois objetos ao
+## mesmo tempo, então roda na main thread depois da barreira — igual ao dano, as
+## tarefas seguem sem lock. Empurra os dois pela metade da sobreposição.
+## ponytail: O(n²) com ~22 corpos; virar grid só se entrar muita unidade.
 func _resolve_collisions() -> void:
-	for i in units.size():
-		for j in range(i + 1, units.size()):
-			var a := units[i]
-			var b := units[j]
+	for i in bodies.size():
+		for j in range(i + 1, bodies.size()):
+			var a := bodies[i]
+			var b := bodies[j]
 			if a.is_dead() or b.is_dead():
 				continue
 			var d := b.pos - a.pos
@@ -221,13 +220,6 @@ func _span_usec() -> int:
 	return last - _frame_t0
 
 
-func _draw() -> void:
-	for s in sheep:
-		_draw_sprite(s)
-	for u in units:
-		_draw_player(u)
-
-
 ## Enquadra os três players: centro na caixa que os contém, zoom pra caber
 ## todo mundo (sem passar de 100% nem mostrar fora do mundo). Lerp pra não
 ## tremer a cada frame.
@@ -241,73 +233,6 @@ func _update_camera() -> void:
 	var z := clampf(minf(vp.x / box.size.x, vp.y / box.size.y), min_zoom, 1.0)
 	cam.zoom = cam.zoom.lerp(Vector2(z, z), 0.08)
 	cam.position = cam.position.lerp(box.get_center(), 0.12)
-
-
-## Sprite animado, com flip ao virar pra esquerda. Serve players, inimigo e
-## ovelhas — sombra e HUD do player ficam em _draw_player().
-func _draw_sprite(p: Player) -> void:
-	var tex := p.get_current_texture()
-	if tex:
-		var fw := p.frame_size.x
-		var fh := p.frame_size.y
-		var src_rect := Rect2(p.get_current_frame() * fw, 0, fw, fh)
-		var dest_rect := Rect2(-fw * 0.5, -fh * 0.5, fw, fh)
-		# Morte: sem sprite próprio no pack — tomba de lado e some.
-		var t := 0.0 if not p.is_dead() else minf(p.death_time / DEATH_TIME, 1.0)
-		var dir := 1.0 if p.facing_right else -1.0
-		draw_set_transform(p.pos, dir * t * PI * 0.5, Vector2(dir, 1.0))
-		draw_texture_rect_region(tex, dest_rect, src_rect, Color(1, 1, 1, 1.0 - t))
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	else:
-		draw_circle(p.pos, RADIUS, p.color)
-
-
-## 9-slice horizontal: as pontas de `cap` px saem inteiras (só escaladas) e o
-## miolo (sempre x 128..192 nas texturas do pack) estica no que sobrar.
-func _draw_hslice(tex: Texture2D, dest: Rect2, src: Rect2, cap: float) -> void:
-	var c := cap * dest.size.y / src.size.y
-	draw_texture_rect_region(tex, Rect2(dest.position, Vector2(c, dest.size.y)),
-			Rect2(src.position, Vector2(cap, src.size.y)))
-	draw_texture_rect_region(tex,
-			Rect2(dest.position + Vector2(c, 0), Vector2(dest.size.x - 2.0 * c, dest.size.y)),
-			Rect2(128, src.position.y, 64, src.size.y))
-	draw_texture_rect_region(tex,
-			Rect2(dest.position + Vector2(dest.size.x - c, 0), Vector2(c, dest.size.y)),
-			Rect2(src.end.x - cap, src.position.y, cap, src.size.y))
-
-
-func _draw_player(p: Player) -> void:
-	# 1. Sombra elíptica sob os pés (as ovelhas já vêm com a sua no sprite)
-	var shadow_pos := p.pos + Vector2(0, 36)
-	draw_set_transform(shadow_pos, 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	_draw_sprite(p)
-	if p.is_dead():
-		return
-
-	# 2. Faixa com o nome e barra de vida, ambas do pack de UI.
-	_draw_hslice(UI_RIBBON, Rect2(p.pos + Vector2(-30, -92), Vector2(60, 22)),
-			Rect2(Vector2(2, p.ribbon_y), RIBBON_SIZE), RIBBON_CAP)
-	draw_string(
-		ThemeDB.fallback_font,
-		p.pos + Vector2(-30, -75),
-		"ENEMY" if p.is_enemy else "P%d" % (p.joy_device + 1),
-		HORIZONTAL_ALIGNMENT_CENTER,
-		60,
-		12,
-		Color(0.15, 0.12, 0.15)
-	)
-
-	var bar := Rect2(p.pos + Vector2(-32, -68), Vector2(64, 19))
-	_draw_hslice(UI_BAR, bar, BAR_SRC, BAR_CAP)
-	var ratio := clampf(p.hp / p.max_hp, 0.0, 1.0)
-	if ratio > 0.0:
-		# Faixa vermelha do asset: 3px de altura, 8px abaixo do topo da barra.
-		draw_texture_rect_region(UI_BAR_FILL,
-				Rect2(bar.position + Vector2(7, 8), Vector2((bar.size.x - 14) * ratio, 3)),
-				Rect2(0, 30, 64, 3))
 
 
 func _unhandled_input(event: InputEvent) -> void:

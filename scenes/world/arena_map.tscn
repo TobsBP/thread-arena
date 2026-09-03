@@ -6,6 +6,13 @@
 z_index = -1
 script = ExtResource("1")
 
+[node name="Ambient" type="CanvasModulate" parent="."]
+
+[node name="Water" type="TileMapLayer" parent="."]
+
 [node name="Ground" type="TileMapLayer" parent="."]
 
 [node name="Decor" type="Node2D" parent="."]
+
+[node name="Clouds" type="Node2D" parent="."]
+z_index = 6

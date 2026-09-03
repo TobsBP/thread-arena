@@ -9,6 +9,7 @@ const SPEED := 260.0
 const BODY_RADIUS := 16.0  ## meia largura da unidade, pra afastar dos blockers
 const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
+const DEATH_TIME := 0.9  ## tombar + sumir
 
 var pos: Vector2
 var spawn_pos: Vector2  ## volta pra cá ao renascer
@@ -122,8 +123,9 @@ func poll_input() -> void:
 			or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_A))
 
 
-## Roda na Thread do player.
-func step(delta: float, work_load: int, bounds: Vector2,
+## Roda na Thread do player. `area` é a faixa andável (ArenaMap.PLAY_AREA):
+## fora dela é beirada de ilha ou água.
+func step(delta: float, work_load: int, area: Rect2,
 		blockers: Array[Rect2] = []) -> void:
 	t_start = Time.get_ticks_usec()
 	var acc := 0.0
@@ -134,7 +136,7 @@ func step(delta: float, work_load: int, bounds: Vector2,
 		death_time += delta
 		t_end = Time.get_ticks_usec()
 		return
-	pos = (pos + input * speed * delta).clamp(Vector2(32, 32), bounds - Vector2(32, 32))
+	pos = (pos + input * speed * delta).clamp(area.position, area.end)
 	_push_out(blockers)
 	anim_time += delta
 	_step_attack(delta)
