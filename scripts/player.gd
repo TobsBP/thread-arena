@@ -30,11 +30,14 @@ var attack_frames := 4
 ## Ataque: começa no poll (main thread) e roda até o ciclo terminar.
 var attack_pressed := false
 var attack_time := -1.0  ## < 0 = não está atacando
+var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
+var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
 var frame_size := Vector2(192, 192)
 var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
 var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
+var ribbon_y := 68.0  ## linha da faixa em SmallRibbons.png (cor do badge)
 
 
 func _init(
@@ -104,6 +107,10 @@ func step(delta: float, work_load: int, bounds: Vector2) -> void:
 	for k in work_load:
 		acc += sqrt(float(k) + pos.x)
 	heat = fmod(acc, 1.0)
+	if is_dead():
+		death_time += delta
+		t_end = Time.get_ticks_usec()
+		return
 	pos = (pos + input * speed * delta).clamp(Vector2(32, 32), bounds - Vector2(32, 32))
 	anim_time += delta
 	_step_attack(delta)
@@ -122,6 +129,11 @@ func _step_attack(delta: float) -> void:
 			attack_time = -1.0
 	elif attack_pressed:
 		attack_time = 0.0
+		attack_hit = false
+
+
+func is_dead() -> bool:
+	return death_time >= 0.0
 
 
 func is_attacking() -> bool:
