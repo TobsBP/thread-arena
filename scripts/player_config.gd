@@ -34,3 +34,4 @@ func next_skin(player_index: int) -> void:
 func prev_skin(player_index: int) -> void:
 	var idx := (skin_index(player_index) - 1 + SKINS.size()) % SKINS.size()
 	skins[player_index] = SKINS[idx]
+

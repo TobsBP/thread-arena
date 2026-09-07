@@ -5,7 +5,6 @@ extends Node2D
 ## Modo threads -> 1 Thread por player, elas rodam sobrepostas.
 ## Quem mostra os números é scenes/hud.tscn.
 
-const RADIUS := 20.0
 const WORK_LOAD := 40000  ## iterações de trabalho falso por player
 
 const BLUE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png")
@@ -213,7 +212,6 @@ func _process(delta: float) -> void:
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera()
 	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0)
-	queue_redraw()
 
 
 ## Roda na Thread da unidade i: escreve só em units[i].
@@ -276,12 +274,6 @@ func _span_usec() -> int:
 	return last - _frame_t0
 
 
-func _draw() -> void:
-	map.draw_into(self)
-	for u in units:
-		_draw_player(u)
-
-
 ## Enquadra os três players: centro na caixa que os contém, zoom pra caber
 ## todo mundo (sem passar de 100% nem mostrar fora do mundo). Lerp pra não
 ## tremer a cada frame.
@@ -295,55 +287,6 @@ func _update_camera() -> void:
 	var z := clampf(minf(vp.x / box.size.x, vp.y / box.size.y), min_zoom, 1.0)
 	cam.zoom = cam.zoom.lerp(Vector2(z, z), 0.08)
 	cam.position = cam.position.lerp(box.get_center(), 0.12)
-
-
-func _draw_player(p: Player) -> void:
-	# 1. Sombra elíptica sob os pés
-	var shadow_pos := p.pos + Vector2(0, 36)
-	draw_set_transform(shadow_pos, 0.0, Vector2(1.0, 0.35))
-	draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
-	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-	# 2. Sprite animado do guerreiro com flip horizontal ao virar para a esquerda
-	var tex := p.get_current_texture()
-	if tex:
-		var frame := p.get_current_frame()
-		var fw := p.frame_size.x
-		var fh := p.frame_size.y
-		var src_rect := Rect2(frame * fw, 0, fw, fh)
-		var dest_rect := Rect2(-fw * 0.5, -fh * 0.5, fw, fh)
-		var flip_scale := Vector2(1.0 if p.facing_right else -1.0, 1.0)
-
-		draw_set_transform(p.pos, 0.0, flip_scale)
-		draw_texture_rect_region(tex, dest_rect, src_rect)
-		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-	else:
-		draw_circle(p.pos, RADIUS, p.color)
-
-	# 3. Barra de HP acima da cabeça
-	var bar := Rect2(p.pos + Vector2(-24, -76), Vector2(48, 7))
-	draw_rect(bar, Color(0.05, 0.06, 0.08, 0.85), true)
-	var ratio := clampf(p.hp / p.max_hp, 0.0, 1.0)
-	if ratio > 0.0:
-		var fill := Rect2(bar.position + Vector2.ONE, Vector2((bar.size.x - 2) * ratio, bar.size.y - 2))
-		draw_rect(fill, Color(0.85, 0.25, 0.25).lerp(Color(0.35, 0.8, 0.35), ratio), true)
-	draw_rect(bar, p.color, false, 1.0)
-
-	# 4. Badge identificador do player (P1, P2, P3) acima da cabeça
-	var badge_size := Vector2(26, 16)
-	var badge_pos := p.pos + Vector2(-badge_size.x * 0.5, -58)
-	var badge_rect := Rect2(badge_pos, badge_size)
-	draw_rect(badge_rect, Color(0.05, 0.06, 0.08, 0.85), true)
-	draw_rect(badge_rect, p.color, false, 1.5)
-	draw_string(
-		ThemeDB.fallback_font,
-		badge_pos + Vector2(4, 12),
-		"E" if p.is_enemy else "P%d" % (p.joy_device + 1),
-		HORIZONTAL_ALIGNMENT_LEFT,
-		-1,
-		11,
-		p.color
-	)
 
 
 func _unhandled_input(event: InputEvent) -> void:
