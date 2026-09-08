@@ -41,6 +41,7 @@ static func kind(index: int) -> Dictionary:
 				idle_frames = 6, run_frames = 6, attack_frames = 4,
 				color = Color(0.85, 0.42, 0.15),
 				max_hp = 50.0, speed = 190.0, attack_range = 90.0, attack_damage = 16.0,
+				cooldown = 0.9,  ## mais ágil, bate mais rápido que o Guerreiro
 			}
 		2:
 			return {
@@ -50,6 +51,7 @@ static func kind(index: int) -> Dictionary:
 				idle_frames = 6, run_frames = 6, attack_frames = 6,
 				color = Color(0.6, 0.5, 0.2),
 				max_hp = 45.0, speed = 200.0, attack_range = 110.0, attack_damage = 20.0,
+				cooldown = 1.6,  ## alcance maior compensa o respiro mais longo entre golpes
 			}
 		3:
 			return {
@@ -59,6 +61,7 @@ static func kind(index: int) -> Dictionary:
 				idle_frames = 4, run_frames = 4, attack_frames = 4,
 				color = Color(0.5, 0.32, 0.15),
 				max_hp = 70.0, speed = 150.0, attack_range = 90.0, attack_damage = 22.0,
+				cooldown = 1.5,  ## o mais lento pra bater — tanque, não precisa de ritmo
 			}
 	## index % COUNT == 0: Guerreiro Vermelho — o inimigo original, tira de 1
 	## linha (sheet_cols fica no default 0 do Player, não precisa setar aqui).
@@ -68,4 +71,5 @@ static func kind(index: int) -> Dictionary:
 		idle_frames = 8, run_frames = 6, attack_frames = 4,
 		color = Color(0.85, 0.25, 0.25),
 		max_hp = 60.0, speed = 170.0, attack_range = 90.0, attack_damage = 18.0,
+		cooldown = 1.2,  ## ritmo do inimigo original
 	}

@@ -82,6 +82,7 @@ var gold := 0
 var _action2_prev := false  ## detecta a borda de subida do 2º botão (guarda/coleta)
 var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
 var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
+var attack_cooldown := 1.2  ## inimigo: respiro entre golpes — varia por tipo (ver EnemyTypes)
 var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
 var heal_fx_time := -1.0  ## >= 0 = tocando o efeito de cura (ver main.gd _resolve_meat_pickup)
 var hit_flash_time := -1.0  ## >= 0 = piscando vermelho (acabou de tomar dano)

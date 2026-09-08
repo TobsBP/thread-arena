@@ -402,6 +402,7 @@ func _spawn_enemy_of_type(kind: Dictionary, spot: Vector2, scale := 1.0) -> Play
 	e.hp = e.max_hp
 	e.attack_range = kind.get("attack_range", ATTACK_RANGE)
 	e.attack_damage = kind.get("attack_damage", ATTACK_DAMAGE) * scale
+	e.attack_cooldown = kind.get("cooldown", ENEMY_COOLDOWN)
 	e.frame_size = kind.get("frame_size", Vector2(192, 192))
 	e.sheet_cols = kind.get("sheet_cols", 0)
 	e.idle_row = kind.get("idle_row", 0)
@@ -472,7 +473,7 @@ func _process(delta: float) -> void:
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
-			u.chase(players, ATTACK_RANGE, ENEMY_COOLDOWN, delta)
+			u.chase(players, u.attack_range, u.attack_cooldown, delta)
 		else:
 			u.poll_input(delta)
 			if u.is_archer and u.is_aiming:
