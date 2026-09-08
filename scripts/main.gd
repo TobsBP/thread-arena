@@ -23,6 +23,9 @@ const PURPLE_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (F
 const YELLOW_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png")
 const YELLOW_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Run.png")
 const YELLOW_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Attack1.png")
+const BLACK_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Idle.png")
+const BLACK_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Run.png")
+const BLACK_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Attack1.png")
 
 ## Pawns: dois azuis e dois amarelos indo do toco à base com madeira. Cenário
 ## vivo, igual às ovelhas — main thread, fora de units/threads.
@@ -95,29 +98,34 @@ func _ready() -> void:
 
 ## P1 WASD + F, P2 setas + num0, P3 IJKL + O — cada um somando o controle
 ## de mesmo índice (ataque também no botão A do gamepad).
+## Skins lidos de PlayerConfig (definidos na tela de seleção de personagem).
 func _spawn_players() -> void:
 	var size := PLAY_AREA.size
-	var setups := [
-		[Color.CORNFLOWER_BLUE, [KEY_W, KEY_S, KEY_A, KEY_D, KEY_F], BLUE_IDLE, BLUE_RUN, BLUE_ATK, 68.0],
-		# roxo no lugar do vermelho: vermelho fica reservado pros inimigos
-		[Color(0.65, 0.42, 0.86), [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_KP_0], PURPLE_IDLE, PURPLE_RUN, PURPLE_ATK, 452.0],
-		[Color(0.96, 0.78, 0.22), [KEY_I, KEY_K, KEY_J, KEY_L, KEY_O], YELLOW_IDLE, YELLOW_RUN, YELLOW_ATK, 324.0],
+	## Esquemas de teclas por player: [cima, baixo, esquerda, direita, ataque]
+	var key_schemes := [
+		[KEY_W, KEY_S, KEY_A, KEY_D, KEY_F],
+		[KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_KP_0],
+		[KEY_I, KEY_K, KEY_J, KEY_L, KEY_O],
 	]
-	for i in setups.size():
+	for i in key_schemes.size():
+		var tex := _skin_tex(PlayerConfig.skins[i])
 		var spot := PLAY_AREA.position + Vector2(
-				size.x * (i + 1) / (setups.size() + 1), size.y * 0.5)
-		var p := Player.new(
-			spot,
-			setups[i][0],
-			setups[i][1],
-			i,
-			setups[i][2],
-			setups[i][3],
-			setups[i][4]
-		)
-		p.ribbon_y = setups[i][5]
+				size.x * (i + 1) / (key_schemes.size() + 1), size.y * 0.5)
+		var p := Player.new(spot, tex[3], key_schemes[i], i, tex[0], tex[1], tex[2])
+		p.ribbon_y = tex[4]
 		players.append(p)
 	units.assign(players)  # o inimigo entra depois, em _spawn_enemy()
+
+
+## Retorna [idle, run, atk, color, ribbon_y] para um skin name.
+func _skin_tex(skin: String) -> Array:
+	match skin:
+		"blue":   return [BLUE_IDLE,   BLUE_RUN,   BLUE_ATK,   Color.CORNFLOWER_BLUE,     68.0]
+		"purple": return [PURPLE_IDLE, PURPLE_RUN, PURPLE_ATK, Color(0.65, 0.42, 0.86),  452.0]
+		"yellow": return [YELLOW_IDLE, YELLOW_RUN, YELLOW_ATK, Color(0.96, 0.78, 0.22),  324.0]
+		"black":  return [BLACK_IDLE,  BLACK_RUN,  BLACK_ATK,  Color(0.55, 0.55, 0.60),  196.0]
+	## Fallback: azul.
+	return [BLUE_IDLE, BLUE_RUN, BLUE_ATK, Color.CORNFLOWER_BLUE, 68.0]
 
 
 ## Um inimigo vermelho no meio do mundo: mais uma Thread no mesmo esquema.
@@ -181,11 +189,15 @@ func _process(delta: float) -> void:
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
 		# Uma Thread por player, criada e destruída a cada frame.
+		# start() dispara e volta na hora; o trabalho já está rodando em paralelo.
+		# ponytail: criar thread por frame custa ~50us contra ~3ms de trabalho.
+		# Se WORK_LOAD cair muito, virar pool de threads persistentes + Semaphore.
 		var threads: Array[Thread] = []
 		for i in units.size():
 			var t := Thread.new()
 			t.start(_step_player.bind(i, delta))
 			threads.append(t)
+		# Barreira: bloqueia até cada thread terminar (e libera os recursos dela).
 		for t in threads:
 			t.wait_to_finish()
 	else:
@@ -283,3 +295,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_H:
 		hud.cycle_detail()
+	elif event.is_action_pressed("ui_cancel"):
+		## ESC: volta para a seleção de personagem.
+		get_tree().change_scene_to_file("res://scenes/character_select.tscn")
