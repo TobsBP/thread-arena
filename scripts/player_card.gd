@@ -21,14 +21,35 @@ const SKIN_LABELS := {
 	"purple": "ROXO",
 	"yellow": "AMARELO",
 	"black":  "PRETO",
+	"monk":   "BEGE",
 }
 
-## Texturas idle (8 frames, 192×192) para preview — mesmos assets do main.gd.
+## Nome da classe que cada skin joga na arena (ver main.gd _skin_kit) — mostrado
+## no card junto com a cor, já que agora a escolha muda como se joga de verdade.
+const SKIN_CLASS := {
+	"blue":   "Guerreiro",
+	"purple": "Arqueira",
+	"yellow": "Camponês",
+	"black":  "Lanceiro",
+	"monk":   "Curandeiro",
+}
+
+## Texturas idle pra preview — mesmos assets de main.gd _skin_kit(), pra bater
+## exatamente com o que a pessoa vai jogar (cada classe tem quadro e contagem
+## de frames diferentes: ver IDLE_FRAMES/FRAME_SIZE abaixo).
 const IDLE_TEXTURES := {
 	"blue":   preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png"),
-	"purple": preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Idle.png"),
-	"yellow": preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png"),
-	"black":  preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Warrior/Warrior_Idle.png"),
+	"purple": preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Archer/Archer_Idle.png"),
+	"yellow": preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Idle.png"),
+	"black":  preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Lancer/Lancer_Idle.png"),
+	"monk":   preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Monk/Idle.png"),
+}
+const IDLE_FRAMES := {"blue": 8, "purple": 6, "yellow": 8, "black": 12, "monk": 6}
+## Tamanho do quadro no idle: todo mundo é 192×192, menos o Lanceiro (320×320).
+const FRAME_SIZE := {
+	"blue": Vector2(192, 192), "purple": Vector2(192, 192),
+	"yellow": Vector2(192, 192), "black": Vector2(320, 320),
+	"monk": Vector2(192, 192),
 }
 
 ## Cores de destaque por skin (borda do card e badge do player).
@@ -37,6 +58,7 @@ const SKIN_COLORS := {
 	"purple": Color(0.65, 0.42, 0.86),
 	"yellow": Color(0.96, 0.78, 0.22),
 	"black":  Color(0.55, 0.55, 0.60),
+	"monk":   Color(0.85, 0.82, 0.7),
 }
 
 ## Teclas do controle de teclado deste player para navegar no card.
@@ -46,11 +68,10 @@ var _key_prev := KEY_A   ## tecla "esquerda" deste player
 var _key_next := KEY_D   ## tecla "direita" deste player
 var _joy_device := 0
 
-## Animação do sprite de preview.
+## Animação do sprite de preview — quadros/tamanho variam por classe
+## (IDLE_FRAMES/FRAME_SIZE acima), só o fps de exibição é igual pra todo mundo.
 var _anim_time := 0.0
 const _IDLE_FPS := 8.0
-const _IDLE_FRAMES := 8
-const _FRAME_SIZE := Vector2(192.0, 192.0)
 
 ## Layout interno (calculado em _ready, baseado em card_size).
 const CARD_SIZE := Vector2(220.0, 320.0)
@@ -145,14 +166,18 @@ func _draw() -> void:
 	_ink(Vector2(-ts.x * 0.5, -half.y + CARD_PADDING + 14),
 		title, 14, col.darkened(0.15), HORIZONTAL_ALIGNMENT_CENTER)
 
-	## Sprite de preview animado (idle, centrado verticalmente).
+	## Sprite de preview animado (idle, centrado verticalmente). Cada classe
+	## tem quadro/contagem de frames diferente (Lanceiro é 320×320, o resto
+	## 192×192) — a escala normaliza pra caber igual no card não importa a classe.
 	var tex: Texture2D = IDLE_TEXTURES[skin]
 	if tex:
-		var frame := int(_anim_time * _IDLE_FPS) % _IDLE_FRAMES
-		var src := Rect2(frame * _FRAME_SIZE.x, 0.0, _FRAME_SIZE.x, _FRAME_SIZE.y)
-		var scale := 0.72  ## reduz o sprite de 192px para caber no card
-		var dw := _FRAME_SIZE.x * scale
-		var dh := _FRAME_SIZE.y * scale
+		var fsize: Vector2 = FRAME_SIZE[skin]
+		var frames: int = IDLE_FRAMES[skin]
+		var frame := int(_anim_time * _IDLE_FPS) % frames
+		var src := Rect2(frame * fsize.x, 0.0, fsize.x, fsize.y)
+		var scale := 138.0 / fsize.x
+		var dw := fsize.x * scale
+		var dh := fsize.y * scale
 		var dest := Rect2(-dw * 0.5, -half.y + 44.0, dw, dh)
 		draw_texture_rect_region(tex, dest, src)
 
@@ -161,10 +186,13 @@ func _draw() -> void:
 	_ink(Vector2(-half.x + CARD_PADDING, arrow_y), "◄", 20, INK)
 	_ink(Vector2(half.x - CARD_PADDING - 20, arrow_y), "►", 20, INK)
 
-	## Nome do skin selecionado.
-	var label: String = SKIN_LABELS.get(skin, skin.to_upper())
-	var ls := font.get_string_size(label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
-	_ink(Vector2(-ls.x * 0.5, arrow_y + 4.0), label, 16, INK, HORIZONTAL_ALIGNMENT_CENTER)
+	## Classe (o que realmente muda o jogo) + cor escolhida, embaixo dela.
+	var class_label: String = SKIN_CLASS.get(skin, skin.to_upper())
+	var cs := font.get_string_size(class_label, HORIZONTAL_ALIGNMENT_CENTER, -1, 16)
+	_ink(Vector2(-cs.x * 0.5, arrow_y - 8.0), class_label, 16, INK, HORIZONTAL_ALIGNMENT_CENTER)
+	var color_label: String = SKIN_LABELS.get(skin, skin.to_upper())
+	var ls := font.get_string_size(color_label, HORIZONTAL_ALIGNMENT_CENTER, -1, 11)
+	_ink(Vector2(-ls.x * 0.5, arrow_y + 8.0), color_label, 11, col.darkened(0.15), HORIZONTAL_ALIGNMENT_CENTER)
 
 	## Linha separadora acima das setas.
 	draw_line(Vector2(-half.x + CARD_PADDING, arrow_y - 30.0),

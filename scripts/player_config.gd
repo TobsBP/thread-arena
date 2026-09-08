@@ -3,15 +3,17 @@ extends Node
 ## Singleton (Autoload) que persiste a escolha de skin de cada player
 ## entre a cena de seleção (character_select.tscn) e a arena (main.tscn).
 ##
-## Skin é uma String que mapeia para um conjunto de texturas em main.gd:
-##   "blue"   → Blue Units / Warrior
-##   "purple" → Purple Units / Warrior
-##   "yellow" → Yellow Units / Warrior
-##   "black"  → Black Units / Warrior
+## Skin é uma String que mapeia pra uma classe inteira (kit de texturas +
+## mecânica) em main.gd _skin_kit():
+##   "blue"   → Guerreiro (golpe especial + bloqueio)
+##   "purple" → Arqueira (flecha em arco + chuva + mira)
+##   "yellow" → Camponês (faca/martelada + coleta de madeira/ouro)
+##   "black"  → Lanceiro (golpe de lança + bloqueio)
+##   "monk"   → Curandeiro (cura o aliado mais perto em vez de bater)
 ##
 ## O inimigo (index -1) usa sempre "red" — não configurável.
 
-const SKINS := ["blue", "purple", "yellow", "black"]
+const SKINS := ["blue", "purple", "yellow", "black", "monk"]
 
 ## Skin padrão para cada um dos 3 players controláveis.
 var skins: Array[String] = ["blue", "purple", "yellow"]
