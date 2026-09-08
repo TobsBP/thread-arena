@@ -26,27 +26,28 @@ const CLOUD_SPEED := 26.0  ## px/s no alpha máximo; as fracas andam mais devaga
 const CLOUD_WIDTH := 576.0
 const CLOUD_LAYOUT_SEED := 20260907  ## mesmo seed do character_select: nuvens alinhadas na transição
 
-## Trio de guerreiros parados de enfeite atrás do título — mesmos skins do
-## seletor de personagem (menos o preto, pra não empatar visualmente com o
-## inimigo vermelho da arena).
+## Trio de enfeite atrás do título — as 3 classes de verdade do seletor de
+## personagem (Guerreiro/Arqueira/Camponês; o Lanceiro/preto fica de fora
+## porque o quadro dele é 320×320, não 192, e bagunçaria o espaçamento).
 const BANNERS := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Warrior/Warrior_Idle.png"),
-	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Warrior/Warrior_Idle.png"),
-	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Warrior/Warrior_Idle.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Archer/Archer_Idle.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Idle.png"),
 ]
+## Quadros de cada um, na mesma ordem de BANNERS acima (Warrior=8, Archer=6, Pawn=8).
+const BANNER_FRAME_COUNTS: Array[int] = [8, 6, 8]
 const BANNER_FRAME_SIZE := Vector2(192.0, 192.0)
 const BANNER_FPS := 8.0
-const BANNER_FRAMES := 8
 const BANNER_SPACING := 150.0
 
 ## Ovelhas atravessando a tela, cada uma no seu ritmo — mesmos assets e
 ## frame_size que main.gd usa pra cenário vivo (Player.frame_size = 128, não
 ## 192: a ovelha é um sprite bem menor que o dos guerreiros, e é desenhada em
 ## tamanho natural, sem escala extra — só copiamos esse mesmo tamanho aqui).
-const SHEEP_MOVE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Meat/Sheep/Sheep_Move.png")
+const SHEEP_MOVE := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Sheep/HappySheep_Bouncing.png")
 const SHEEP_FRAME_SIZE := Vector2(128.0, 128.0)
 const SHEEP_FPS := 8.0
-const SHEEP_FRAMES := 4  ## Sheep_Move.png tem 4 quadros (main.gd: r_frames=4)
+const SHEEP_FRAMES := 6  ## HappySheep_Bouncing.png tem 6 quadros (main.gd: r_frames=6)
 ## Escala relativa ao guerreiro: BANNER_FRAME_SIZE é 192, a ovelha é 128 —
 ## aplicando o mesmo fator de scale dos guerreiros (1.6) o tamanho fica igual
 ## à proporção real das duas texturas lado a lado.
@@ -136,9 +137,8 @@ func _draw() -> void:
 		draw_rect(Rect2(0.0, i * band_h, vp.x, band_h + 1.0),
 			SKY_TOP.lerp(SKY_BOTTOM, float(i) / float(BANDS - 1)), true)
 
-	## Trio de guerreiros animados, de enfeite, atrás do título.
-	var frame := int(_anim_time * BANNER_FPS) % BANNER_FRAMES
-	var src := Rect2(frame * BANNER_FRAME_SIZE.x, 0.0, BANNER_FRAME_SIZE.x, BANNER_FRAME_SIZE.y)
+	## Trio animado (Guerreiro/Arqueira/Camponês), de enfeite, atrás do título.
+	## Frame size é igual pros três (192), só a contagem de quadros muda.
 	var scale := 1.6
 	var dw := BANNER_FRAME_SIZE.x * scale
 	var dh := BANNER_FRAME_SIZE.y * scale
@@ -146,6 +146,8 @@ func _draw() -> void:
 	var banner_top := vp.y * 0.5 - dh * 0.5 + 30.0
 	var first_banner_cx := vp.x * 0.5 - total_w * 0.5
 	for i in BANNERS.size():
+		var frame := int(_anim_time * BANNER_FPS) % BANNER_FRAME_COUNTS[i]
+		var src := Rect2(frame * BANNER_FRAME_SIZE.x, 0.0, BANNER_FRAME_SIZE.x, BANNER_FRAME_SIZE.y)
 		var cx := first_banner_cx + BANNER_SPACING * i
 		draw_texture_rect_region(BANNERS[i],
 			Rect2(cx - dw * 0.5, banner_top, dw, dh), src,

@@ -77,6 +77,15 @@ const TREES := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Tree4.png"),
 ]
 const TREE_FRAMES := 8  ## as folhas de árvore são 8 quadros de balanço lado a lado
+## Toco de cada árvore acima, na mesma ordem — vira o desenho quando cortada
+## (ver chop_tree()). REGROW_TIME é quanto tempo até a árvore voltar a crescer.
+const STUMPS := [
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 1.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 2.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 3.png"),
+	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 4.png"),
+]
+const REGROW_TIME := 25.0
 
 ## Construções fixas: [textura, posição em fração da ilha].
 const BUILDINGS := [
@@ -116,11 +125,11 @@ const PROPS := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Tools/Tool_03.png"),
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Tools/Tool_04.png"),
 ]
-const GOLD_STONES := [
-	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Stones/Gold Stone 1.png"),
-	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Stones/Gold Stone 3.png"),
-	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Gold/Gold Stones/Gold Stone 5.png"),
-]
+## Mina de ouro de verdade (pack Update 010) no lugar das pedrinhas soltas —
+## prédio, então ganha blocker como as construções, e a coleta (main.gd) usa
+## a mesma gold_spots de sempre, só menos pontos (mina é maior que pedra).
+const GOLD_MINE := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Gold Mine/GoldMine_Active.png")
+const GOLD_MINE_COUNT := 8
 
 ## Pedras e um pato boiando na faixa de água — a borda não fica vazia. As
 ## duas texturas são tiras animadas (marola na pedra, pato balançando).
@@ -133,6 +142,13 @@ const WATER_ROCKS := [
 const WATER_ROCK_FRAMES := 16
 const DUCK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Decorations/Rubber Duck/Rubber duck.png")
 const DUCK_FRAMES := 3
+
+## Ponte de enfeite saindo da borda de baixo da ilha pra dentro da água — só
+## visual (PLAY_AREA não chega lá, não precisa de blocker nem de conectar
+## nada). BRIDGE_ALL é uma folha com vários pedaços; BRIDGE_PIECE_RECT
+## recorta só o segmento horizontal (canto superior esquerdo da folha).
+const BRIDGE_ALL := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Terrain/Bridge/Bridge_All.png")
+const BRIDGE_PIECE_RECT := Rect2(18, 0, 132, 64)
 
 ## Fogueiras: os únicos pontos quentes do mapa, um por canto habitado. O pack
 ## não tem uma fogueira pronta — é a pilha de lenha com a chama por cima, a
@@ -178,6 +194,14 @@ var blockers: Array[Rect2] = []
 ## Pontos de interesse pros pawns: porta das construções e pé das árvores.
 var building_spots: Array[Vector2] = []
 var tree_spots: Array[Vector2] = []
+var gold_spots: Array[Vector2] = []
+## Paralelos a tree_spots, pra cada árvore poder virar toco e voltar a
+## crescer (ver chop_tree() e o _process()).
+var _tree_nodes: Array[Node2D] = []
+var _tree_raw_spots: Array[Vector2] = []  ## canto antes do offset do pé, pra recriar o nó
+var _tree_tex: Array[Texture2D] = []  ## árvore original, pra restaurar ao crescer de novo
+var _tree_stump_tex: Array[Texture2D] = []
+var tree_regrow: Array[float] = []  ## <= 0 = árvore em pé; > 0 = segundos até voltar
 
 @onready var water: TileMapLayer = $Water
 @onready var foam: TileMapLayer = $Foam
@@ -197,14 +221,33 @@ func _ready() -> void:
 	_build_clouds(rng)
 
 
-## Só as nuvens se mexem por conta própria; o resto do cenário é parado ou
-## anima sozinho no AnimatedSprite2D.
+## Só as nuvens se mexem por conta própria e as árvores cortadas contam pra
+## voltar a crescer; o resto do cenário é parado ou anima sozinho no
+## AnimatedSprite2D.
 func _process(delta: float) -> void:
 	for c in clouds.get_children():
 		var sprite := c as Sprite2D
 		sprite.position.x += CLOUD_SPEED * sprite.modulate.a * delta
 		if sprite.position.x > WORLD.x:
 			sprite.position.x = -CLOUD_WIDTH * sprite.scale.x
+
+	for i in tree_regrow.size():
+		if tree_regrow[i] <= 0.0:
+			continue
+		tree_regrow[i] -= delta
+		if tree_regrow[i] <= 0.0:
+			_tree_nodes[i].queue_free()
+			_tree_nodes[i] = _add_decor(_tree_tex[i], _tree_raw_spots[i], TREE_FRAMES)
+
+
+## Troca a árvore pelo toco (main.gd chama isso ao começar a coleta de
+## madeira) e agenda quando ela volta a virar árvore, no _process() acima.
+func chop_tree(index: int) -> void:
+	if tree_regrow[index] > 0.0:
+		return
+	tree_regrow[index] = REGROW_TIME
+	_tree_nodes[index].queue_free()
+	_tree_nodes[index] = _add_decor(_tree_stump_tex[index], _tree_raw_spots[index], 1)
 
 
 ## Nuvem mais opaca = mais perto = mais rápida: a camada inteira ganha
@@ -416,14 +459,20 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 				Vector2(size.x * 0.7, size.y * 0.45)))
 		building_spots.append(pos + Vector2(size.x * 0.5, size.y + 20.0))
 	for _i in 60:
-		var tree: Texture2D = TREES[rng.randi() % TREES.size()]
+		var idx := rng.randi() % TREES.size()
+		var tree: Texture2D = TREES[idx]
 		var spot := _fit(_edge_spot(rng), tree, TREE_FRAMES)
-		_add_decor(tree, spot, TREE_FRAMES)
+		var node := _add_decor(tree, spot, TREE_FRAMES)
 		# Tronco: um retângulo pequeno no pé do quadro, a copa não bloqueia.
 		var fw := tree.get_width() / TREE_FRAMES
 		blockers.append(Rect2(spot + Vector2(fw * 0.5 - 18.0, tree.get_height() - 38.0),
 				Vector2(36.0, 26.0)))
 		tree_spots.append(spot + Vector2(fw * 0.5, tree.get_height() - 25.0))
+		_tree_nodes.append(node)
+		_tree_raw_spots.append(spot)
+		_tree_tex.append(tree)
+		_tree_stump_tex.append(STUMPS[idx])
+		tree_regrow.append(0.0)
 	for _i in 30:
 		var bush: Texture2D = BUSHES[rng.randi() % BUSHES.size()]
 		_add_decor(bush, _fit(_edge_spot(rng), bush, BUSH_FRAMES), BUSH_FRAMES)
@@ -440,13 +489,27 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 	for _i in 26:
 		var prop: Texture2D = PROPS[rng.randi() % PROPS.size()]
 		_add_decor(prop, _fit(_land_spot(rng), prop, 1), 1, SWAY_FPS, GROUND_FOOT)
-	# Ouro só nas bordas: no meio ia virar enfeite pisado o tempo todo.
-	for _i in 8:
-		var gold: Texture2D = GOLD_STONES[rng.randi() % GOLD_STONES.size()]
-		_add_decor(gold, _fit(_edge_spot(rng), gold, 1), 1, SWAY_FPS, GROUND_FOOT)
+	# Minas só nas bordas: no meio ia virar obstáculo no meio da arena.
+	for _i in GOLD_MINE_COUNT:
+		var pos := _fit(_edge_spot(rng), GOLD_MINE, 1)
+		var mine_node := _add_decor(GOLD_MINE, pos, 1)
+		var size := GOLD_MINE.get_size()
+		# Prédio pequeno: só a base bloqueia, igual às construções fixas.
+		blockers.append(Rect2(pos + Vector2(size.x * 0.15, size.y * 0.55),
+				Vector2(size.x * 0.7, size.y * 0.35)))
+		gold_spots.append(mine_node.position + Vector2(size.x * 0.5, 0))
 	for _i in 14:
 		_add_decor(WATER_ROCKS[rng.randi() % WATER_ROCKS.size()], _water_spot(rng),
 				WATER_ROCK_FRAMES)
+	# Ponte de enfeite saindo da beirada de baixo da ilha pra dentro da água.
+	var bridge_tex := AtlasTexture.new()
+	bridge_tex.atlas = BRIDGE_ALL
+	bridge_tex.region = BRIDGE_PIECE_RECT
+	var bridge_cx := ISLAND.position.x + ISLAND.size.x * 0.5
+	var bridge_cy := ISLAND.end.y + 20.0
+	_add_decor(bridge_tex,
+			Vector2(bridge_cx - BRIDGE_PIECE_RECT.size.x * 0.5, bridge_cy - BRIDGE_PIECE_RECT.size.y * 0.5),
+			1, SWAY_FPS, 0.5)
 	_add_decor(DUCK, _water_spot(rng), DUCK_FRAMES)
 	for spot in CAMPFIRES:
 		_add_campfire(ISLAND.position + (spot as Vector2) * ISLAND.size)
