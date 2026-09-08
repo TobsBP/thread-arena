@@ -95,6 +95,13 @@ var is_charging := false  ## segurou além do 1º golpe: parado carregando o esp
 var max_stamina := 100.0
 var stamina := 100.0  ## consumida por golpe/cura/flecha, regenera sozinha (ver poll_input)
 var frame_size := Vector2(192, 192)
+## Sprite em grade (pack Update 010): 0 = tira de 1 linha, comportamento de
+## sempre; > 0 = número de colunas, e idle_row/run_row/attack_row dizem qual
+## linha da grade cada animação usa (ver EnemyTypes e UnitSprite._draw_body).
+var sheet_cols := 0
+var idle_row := 0
+var run_row := 0
+var attack_row := 0
 var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
@@ -460,3 +467,14 @@ func get_current_frame() -> int:
 	if total <= 0:
 		return 0
 	return int(anim_time * anim_fps) % total
+
+
+## Linha da grade pra animação atual — só importa quando sheet_cols > 0
+## (goblins do Update 010); numa tira de 1 linha (sheet_cols == 0) o
+## UnitSprite ignora isto e desenha direto na linha 0.
+func get_current_row() -> int:
+	if is_attacking():
+		return attack_row
+	if is_running():
+		return run_row
+	return idle_row

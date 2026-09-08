@@ -140,7 +140,14 @@ func _draw_body(body: Vector2) -> void:
 		return
 	var fw := unit.frame_size.x
 	var fh := unit.frame_size.y
-	var src_rect := Rect2(unit.get_current_frame() * fw, 0, fw, fh)
+	var frame := unit.get_current_frame()
+	var src_rect: Rect2
+	if unit.sheet_cols > 0:
+		# Grade 2D (goblins do Update 010): uma linha por animação, mesmo
+		# padrão de leitura de _draw_skull() aqui embaixo.
+		src_rect = Rect2((frame % unit.sheet_cols) * fw, unit.get_current_row() * fh, fw, fh)
+	else:
+		src_rect = Rect2(frame * fw, 0, fw, fh)
 	var dest_rect := Rect2(-fw * 0.5, -fh * 0.5, fw, fh)
 	# Morte: tomba de lado e some enquanto a caveira (_draw_dead) sobe por cima.
 	var t := 0.0 if not unit.is_dead() else minf(unit.death_time / Player.DEATH_TIME, 1.0)

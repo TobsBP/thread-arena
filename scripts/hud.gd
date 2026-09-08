@@ -52,6 +52,7 @@ var _ms: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _fps: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _units: Array[Player] = []
 var _frame_t0 := 0
+var _level := 1
 var _history: Array[PackedFloat32Array] = []
 ## StyleBox por unidade: só pra ter canto arredondado sem realocar por frame.
 var _bars: Array[StyleBoxFlat] = []
@@ -94,12 +95,14 @@ func update_stats(
 	fps: Dictionary[bool, float],
 	units: Array[Player],
 	frame_t0: int,
+	level: int,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
 	_fps = fps
 	_units = units
 	_frame_t0 = frame_t0
+	_level = level
 	_record()
 
 	info.text = "\n".join([
@@ -125,6 +128,13 @@ func _record() -> void:
 	while _history.size() < _units.size():
 		_history.append(PackedFloat32Array())
 		_bars.append(_bar_box())
+	# Onda de goblin morreu: units encolhe. Corta o excedente pra
+	# _draw_history() nunca indexar _units além do fim — o índice que sobra
+	# passa a pertencer a outra unidade, então o gráfico dela pula uma vez
+	# (cosmético, não trava).
+	while _history.size() > _units.size():
+		_history.pop_back()
+		_bars.pop_back()
 	for i in _units.size():
 		var h := _history[i]
 		h.append((_units[i].t_end - _units[i].t_start) / 1000.0)
@@ -141,10 +151,12 @@ func _bar_box() -> StyleBoxFlat:
 
 func _mode_title() -> String:
 	if _use_threads:
-		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas[/font_size]" % [
-			GOOD, _units.size(),
+		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas — LEVEL %d[/font_size]" % [
+			GOOD, _units.size(), _level,
 		]
-	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread[/font_size]" % BAD
+	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread — LEVEL %d[/font_size]" % [
+		BAD, _level,
+	]
 
 
 ## Só compara depois de ter medido os dois modos.
