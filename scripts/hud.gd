@@ -58,6 +58,13 @@ var _bars: Array[StyleBoxFlat] = []
 ## 0 = tudo, 1 = só o painel de números, 2 = nada. Alterna com [H].
 var detail := 0
 
+## Hardware da máquina que tá rodando — lido uma vez, não muda em runtime.
+## É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a demo mede o
+## ganho de threads, e esse ganho depende de quantos núcleos existem de
+## verdade pra rodar em paralelo.
+var _cpu_name := ""
+var _cpu_cores := 1
+
 @onready var info: RichTextLabel = $Info
 
 
@@ -68,6 +75,10 @@ func _ready() -> void:
 	info.add_theme_stylebox_override("normal", box)
 	# Sem isto o texto sem [color] sai branco — invisível sobre o papel.
 	info.add_theme_color_override("default_color", INK)
+	_cpu_name = OS.get_processor_name()
+	if _cpu_name.is_empty():
+		_cpu_name = OS.get_name()  ## alguma plataforma pode não expor o nome do processador
+	_cpu_cores = OS.get_processor_count()
 
 
 ## [H]: menos informação na tela.
@@ -93,11 +104,20 @@ func update_stats(
 
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
+		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _cpu_line()],
 		"",
 		_verdict(),
 		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
 	])
 	queue_redraw()
+
+
+## CPU da máquina + quantas threads a rodada de agora está de fato usando —
+## a demo compara serial x threads, mas o resultado depende de hardware: um
+## PC com poucos núcleos ganha menos com threads que um com muitos.
+func _cpu_line() -> String:
+	var used := _units.size() if _use_threads else 1
+	return "%s   —   %d núcleos lógicos, usando %d agora" % [_cpu_name, _cpu_cores, used]
 
 
 ## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
