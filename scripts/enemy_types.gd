@@ -8,11 +8,13 @@ extends RefCounted
 ##
 ## Torch/TNT/Barrel vêm do pack Update 010 como GRADE — uma textura só, uma
 ## linha por animação (idle_row/run_row/attack_row) — diferente da tira de
-## 1 linha do Free Pack (Guerreiro Vermelho, sheet_cols = 0). As contagens de
-## quadro por linha foram lidas dividindo o PNG por 192px e são um chute
-## conservador (menos quadros do que cabe na grade), pra nunca sobrar quadro
-## transparente no fim do ciclo — confira no editor e ajuste se a animação
-## cortar cedo demais.
+## 1 linha do Free Pack (Guerreiro Vermelho, sheet_cols = 0). Cuidado: o
+## tamanho da célula NÃO é sempre 192px só porque o PNG divide certinho por
+## 192 (foi o que deu errado no Barril — a grade real dele é 6 colunas de
+## 128px, não 4 de 192; um recorte no tamanho errado pega pedaço de mais de
+## um quadro ao mesmo tempo). sheet_cols/frame_size/linhas/contagens aqui
+## foram conferidos abrindo cada PNG, não só calculados — mesmo assim, teste
+## no editor antes de confiar de olhos fechados.
 
 const COUNT := 4
 
@@ -38,7 +40,9 @@ static func kind(index: int) -> Dictionary:
 				title = "GOBLIN DA TOCHA",
 				idle = TORCH, run = TORCH, attack = TORCH,
 				sheet_cols = 7, idle_row = 0, run_row = 1, attack_row = 2,
-				idle_frames = 6, run_frames = 6, attack_frames = 4,
+				## Conferido abrindo o PNG: a linha de ataque tem 6 quadros
+				## usados (giro da tocha até o fim do arco), não 4.
+				idle_frames = 6, run_frames = 6, attack_frames = 6,
 				color = Color(0.85, 0.42, 0.15),
 				max_hp = 50.0, speed = 190.0, attack_range = 90.0, attack_damage = 16.0,
 				cooldown = 0.9,  ## mais ágil, bate mais rápido que o Guerreiro
@@ -57,8 +61,12 @@ static func kind(index: int) -> Dictionary:
 			return {
 				title = "GOBLIN DO BARRIL",
 				idle = BARREL, run = BARREL, attack = BARREL,
-				sheet_cols = 4, idle_row = 0, run_row = 1, attack_row = 2,
-				idle_frames = 4, run_frames = 4, attack_frames = 4,
+				# Grade real é 6 colunas x 128px (não 4 x 192 — conferido
+				# abrindo o PNG: um recorte de 192 pegava pedaço de até 3
+				# quadros ao mesmo tempo, daí o "vários aparecem juntos").
+				sheet_cols = 6, frame_size = Vector2(128, 128),
+				idle_row = 0, run_row = 1, attack_row = 3,
+				idle_frames = 1, run_frames = 6, attack_frames = 6,
 				color = Color(0.5, 0.32, 0.15),
 				max_hp = 70.0, speed = 150.0, attack_range = 90.0, attack_damage = 22.0,
 				cooldown = 1.5,  ## o mais lento pra bater — tanque, não precisa de ritmo

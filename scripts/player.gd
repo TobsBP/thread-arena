@@ -165,9 +165,14 @@ func chase(targets: Array[Player], attack_range: float, cooldown: float,
 		return
 	var to_target := best.pos - pos
 	var in_range := to_target.length() < attack_range
-	attack_pressed = in_range and attack_cd <= 0.0
+	attack_pressed = in_range and attack_cd <= 0.0 and not is_attacking()
 	if attack_pressed:
 		attack_cd = cooldown
+		# Início do ataque decidido aqui, igual poll_input() faz pro player
+		# desde o rework de estamina/golpe especial — _step_attack() (na
+		# Thread) só avança o ciclo até o fim, não inicia mais sozinho.
+		attack_time = 0.0
+		attack_hit = false
 	input = Vector2.ZERO if in_range else to_target.normalized()
 	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
 	facing_right = to_target.x >= 0.0
