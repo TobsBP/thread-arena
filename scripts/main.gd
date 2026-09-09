@@ -28,6 +28,7 @@ const ATTACK_DAMAGE := 25.0
 const SPECIAL_DAMAGE_MULT := 2.0  ## golpe especial (segurar) causa o dobro
 const GUARD_DAMAGE_MULT := 0.2  ## bloqueando, só 20% do dano passa
 const KNOCKBACK_DIST := 18.0  ## empurrão instantâneo de quem apanha, pra dar peso
+const BOMBER_BLAST_RADIUS := 90.0  ## alcance do estouro do Goblin do Barril
 const CAM_SHAKE_HIT := 3.0  ## tremor da câmera num golpe normal
 const CAM_SHAKE_SPECIAL := 7.0  ## e num golpe especial/flecha — mais forte
 const CAM_SHAKE_DECAY := 10.0  ## por segundo
@@ -139,6 +140,7 @@ var workers: Array[Player] = []
 ## Tudo que se esbarra: units + sheep + workers, montado uma vez no _ready().
 var bodies: Array[Player] = []
 var arrows: Array[Arrow] = []  ## flechas em voo; roda fora do esquema de Threads
+var dynamites: Array[Dynamite] = []  ## dinamites arremessadas pelo Goblin da Dinamite
 var meat_drops: Array[MeatDrop] = []  ## carne largada por ovelha morta, no chão
 var damage_numbers: Array[DamageNumber] = []  ## "-25"/"+30" flutuando
 var cam_shake := 0.0  ## magnitude do tremor de câmera; decai sozinho (ver _update_camera)
@@ -403,6 +405,9 @@ func _spawn_enemy_of_type(kind: Dictionary, spot: Vector2, scale := 1.0) -> Play
 	e.attack_range = kind.get("attack_range", ATTACK_RANGE)
 	e.attack_damage = kind.get("attack_damage", ATTACK_DAMAGE) * scale
 	e.attack_cooldown = kind.get("cooldown", ENEMY_COOLDOWN)
+	e.is_thrower = kind.get("is_thrower", false)
+	e.is_bomber = kind.get("is_bomber", false)
+	e.bomber_fuse = kind.get("bomber_fuse", e.bomber_fuse)
 	e.frame_size = kind.get("frame_size", Vector2(192, 192))
 	e.sheet_cols = kind.get("sheet_cols", 0)
 	e.idle_row = kind.get("idle_row", 0)
@@ -474,6 +479,10 @@ func _process(delta: float) -> void:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
 			u.chase(players, u.attack_range, u.attack_cooldown, delta)
+			# Mesmo instante que o arqueiro dispara a flecha: chase() acabou
+			# de decidir "começou a atacar agora" (attack_time == 0.0).
+			if u.is_thrower and u.attack_time == 0.0:
+				_throw_dynamite(u)
 		else:
 			u.poll_input(delta)
 			if u.is_archer and u.is_aiming:
@@ -497,6 +506,10 @@ func _process(delta: float) -> void:
 	for a in arrows:
 		a.step(delta)
 	arrows = arrows.filter(func(a: Arrow) -> bool: return not a.is_expired() and not a.hit)
+
+	for d in dynamites:
+		d.step(delta)
+	dynamites = dynamites.filter(func(d: Dynamite) -> bool: return not d.is_expired())
 
 	for m in meat_drops:
 		m.step(delta)
@@ -534,6 +547,8 @@ func _process(delta: float) -> void:
 
 	_resolve_attacks()
 	_resolve_arrow_hits()
+	_resolve_dynamite_hits()
+	_resolve_bomber_blasts()
 	_resolve_monk_heals()
 	_resolve_monk_aura(delta)
 	_resolve_sheep_hits()
@@ -569,8 +584,8 @@ func _resolve_attacks() -> void:
 					u.death_time = -1.0
 					u.pos = u.spawn_pos
 			continue
-		if u.is_archer or u.is_monk:
-			continue  ## arqueira é à distância (flecha); curandeiro não briga
+		if u.is_archer or u.is_monk or u.is_thrower or u.is_bomber:
+			continue  ## arqueira/dinamite são à distância; curandeiro não briga; barril explode
 		if not u.is_attacking() or u.attack_hit:
 			continue
 		for v in units:
@@ -646,6 +661,56 @@ func _resolve_arrow_hits() -> void:
 				s.death_time = 0.0
 				meat_drops.append(MeatDrop.new(s.pos))
 				break
+
+
+## Estouro em área: dano só quando should_blast() vira true (uma vez só, no
+## fim do pavio — ver Dynamite) e só nos players dentro de BLAST_RADIUS do
+## ponto onde ela pousou. Roda depois da barreira, igual ao resto do dano.
+func _resolve_dynamite_hits() -> void:
+	for d in dynamites:
+		if not d.should_blast():
+			continue
+		_shake_camera(CAM_SHAKE_SPECIAL)
+		for p in players:
+			if p.is_dead():
+				continue
+			if p.pos.distance_to(d.target_pos) > Dynamite.BLAST_RADIUS:
+				continue
+			p.hp -= d.damage
+			p.hit_flash_time = 0.0
+			p.hit_pop_time = 0.0
+			_knockback(p, d.target_pos)
+			damage_numbers.append(DamageNumber.new(p.pos, d.damage))
+			if p.hp <= 0.0:
+				p.hp = 0.0
+				p.death_time = 0.0
+
+
+## Goblin do Barril: não bate, chega perto e explode — chase() já acendeu o
+## pavio (fuse_time = 0.0) no mesmo instante que decidiu atacar; aqui só
+## checamos se ele já terminou (fuse_done(), uma vez só). Estoura em área
+## nos players por perto E mata ele mesmo — mexe em dois objetos ao mesmo
+## tempo, então roda depois da barreira, igual ao resto do dano.
+func _resolve_bomber_blasts() -> void:
+	for u in units:
+		if u.is_dead() or not u.is_bomber or not u.fuse_done():
+			continue
+		_shake_camera(CAM_SHAKE_SPECIAL)
+		for p in players:
+			if p.is_dead():
+				continue
+			if p.pos.distance_to(u.pos) > BOMBER_BLAST_RADIUS:
+				continue
+			p.hp -= u.attack_damage
+			p.hit_flash_time = 0.0
+			p.hit_pop_time = 0.0
+			_knockback(p, u.pos)
+			damage_numbers.append(DamageNumber.new(p.pos, u.attack_damage))
+			if p.hp <= 0.0:
+				p.hp = 0.0
+				p.death_time = 0.0
+		u.hp = 0.0
+		u.death_time = 0.0  ## suicídio: o próprio estouro também mata ele
 
 
 ## Curandeiro: em vez de bater, o "ataque" cura o aliado ferido mais perto
@@ -800,6 +865,30 @@ func _fire_arrow(p: Player) -> void:
 	arrows.append(Arrow.new(from, from + dir * SHOT_RANGE, Arrow.Mode.SHOT))
 
 
+## Nasce na posição do goblin, mirando o player vivo mais perto (o mesmo alvo
+## que chase() já escolheu pra parar e atacar — recalculado aqui porque
+## chase() não expõe quem escolheu). Sem alvo vivo, não arremessa nada.
+func _throw_dynamite(u: Player) -> void:
+	var target := _nearest_player(u.pos)
+	if target == null:
+		return
+	var from := u.pos + Vector2(0, -20)
+	dynamites.append(Dynamite.new(from, target.pos, u.attack_damage))
+
+
+func _nearest_player(from: Vector2) -> Player:
+	var best: Player = null
+	var best_d := INF
+	for p in players:
+		if p.is_dead():
+			continue
+		var d := from.distance_squared_to(p.pos)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
 ## Skill: RAIN_COUNT flechas saem do arqueiro e fazem o mesmo lançamento
 ## oblíquo, cada uma mirando um ponto espalhado ao redor do inimigo mais
 ## próximo (ou de um ponto à frente, sem alvo) — arco mais alto/longo
@@ -854,6 +943,8 @@ func _span_usec() -> int:
 func _draw() -> void:
 	for a in arrows:
 		_draw_arrow(a)
+	for d in dynamites:
+		_draw_dynamite(d)
 	for m in meat_drops:
 		var tex := MeatDrop.TEXTURE
 		draw_texture(tex, m.pos - tex.get_size() * 0.5)
@@ -893,6 +984,30 @@ func _draw_arrow(a: Arrow) -> void:
 
 	draw_set_transform(a.draw_pos(), a.visual_angle, Vector2.ONE)
 	draw_texture(Arrow.TEXTURE, -Arrow.TEXTURE.get_size() * 0.5)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Voando: mesma sombra da flecha + o graveto girando. Pousada com o pavio
+## queimando, fica parada (sem desenho extra — o pavio "chiando" já é a
+## textura em si girando, ver Dynamite.spin_frame). No instante do estouro,
+## troca pro mesmo estouro que a morte usa (UnitSprite._draw_explosion).
+func _draw_dynamite(d: Dynamite) -> void:
+	if d.is_exploding():
+		var frame := d.explosion_frame()
+		var s := Dynamite.EXPLOSION_SIZE
+		draw_texture_rect_region(Dynamite.EXPLOSION_TEXTURE,
+				Rect2(d.target_pos - Vector2(s, s) * 0.5, Vector2(s, s)),
+				Rect2(frame * s, 0, s, s))
+		return
+	if d.height > 0.5:
+		draw_set_transform(d.pos, 0.0, Vector2(1.0, 0.35))
+		draw_circle(Vector2.ZERO, 6.0, Color(0.0, 0.0, 0.0, 0.25))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var frame := d.spin_frame()
+	var s := Dynamite.FRAME_SIZE
+	draw_set_transform(d.draw_pos(), d.visual_angle, Vector2.ONE)
+	draw_texture_rect_region(Dynamite.TEXTURE, Rect2(-s * 0.5, -s * 0.5, s, s),
+			Rect2(frame * s, 0, s, s))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 

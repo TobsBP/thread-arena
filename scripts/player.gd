@@ -34,6 +34,10 @@ var is_enemy := false
 var is_archer := false  ## dispara Arrow de verdade (ver main.gd _fire_arrow)
 var is_sheep := false  ## morte mostra baforada em vez de caveira (ver UnitSprite)
 var is_monk := false  ## "ataque" cura o aliado mais perto em vez de bater (ver main.gd)
+var is_thrower := false  ## inimigo à distância: "ataque" arremessa Dynamite em vez de bater (ver main.gd)
+var is_bomber := false  ## chega perto e explode em vez de bater (ver main.gd _resolve_bomber_blasts)
+var bomber_fuse := 0.6  ## segundos entre "atacar" (chase()) e o estouro (só is_bomber)
+var fuse_time := -1.0  ## >= 0 = pavio contando; ver _step_fuse() e Player.fuse_done()
 var input := Vector2.ZERO  ## escrito na main thread, lido na thread do player
 var heat := 0.0  ## resultado do trabalho pesado, só pra provar que rodou
 var max_hp := 100.0
@@ -173,6 +177,8 @@ func chase(targets: Array[Player], attack_range: float, cooldown: float,
 		# Thread) só avança o ciclo até o fim, não inicia mais sozinho.
 		attack_time = 0.0
 		attack_hit = false
+		if is_bomber:
+			fuse_time = 0.0  ## acendeu: main.gd._resolve_bomber_blasts() cuida do resto
 	input = Vector2.ZERO if in_range else to_target.normalized()
 	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
 	facing_right = to_target.x >= 0.0
@@ -321,6 +327,7 @@ func step(delta: float, work_load: int, area: Rect2,
 	_step_hit_flash(delta)
 	_step_hit_pop(delta)
 	_step_block_fx(delta)
+	_step_fuse(delta)
 	if input.x > 0.05:
 		facing_right = true
 	elif input.x < -0.05:
@@ -426,6 +433,23 @@ func _step_block_fx(delta: float) -> void:
 	block_fx_time += delta
 	if block_fx_time >= BLOCK_FX_DURATION:
 		block_fx_time = -1.0
+
+
+## Só conta — quem decide o que fazer quando o pavio termina é main.gd
+## (_resolve_bomber_blasts, depois da barreira: mexe no bomber E nos players).
+func _step_fuse(delta: float) -> void:
+	if fuse_time < 0.0:
+		return
+	fuse_time += delta
+
+
+## true na primeira checagem depois que o pavio passa de bomber_fuse, false
+## depois disso (consome o pavio) — mesmo padrão do Dynamite.should_blast().
+func fuse_done() -> bool:
+	if fuse_time < 0.0 or fuse_time < bomber_fuse:
+		return false
+	fuse_time = -1.0
+	return true
 
 
 func is_blocking_fx() -> bool:

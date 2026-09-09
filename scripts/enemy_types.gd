@@ -54,8 +54,15 @@ static func kind(index: int) -> Dictionary:
 				sheet_cols = 7, idle_row = 0, run_row = 1, attack_row = 2,
 				idle_frames = 6, run_frames = 6, attack_frames = 6,
 				color = Color(0.6, 0.5, 0.2),
-				max_hp = 45.0, speed = 200.0, attack_range = 110.0, attack_damage = 20.0,
-				cooldown = 1.6,  ## alcance maior compensa o respiro mais longo entre golpes
+				## is_thrower: "ataque" não é corpo-a-corpo — arremessa uma
+				## Dynamite de verdade (main.gd _throw_dynamite), que voa,
+				## pousa, queima o pavio e SÓ ENTÃO estoura em área (ver
+				## scripts/dynamite.gd). attack_range aqui é a distância que
+				## ele mantém antes de parar e arremessar, bem maior que o
+				## alcance corpo-a-corpo dos outros tipos.
+				is_thrower = true,
+				max_hp = 45.0, speed = 200.0, attack_range = 240.0, attack_damage = 20.0,
+				cooldown = 1.8,  ## alcance à distância compensa o respiro mais longo
 			}
 		3:
 			return {
@@ -68,8 +75,13 @@ static func kind(index: int) -> Dictionary:
 				idle_row = 0, run_row = 1, attack_row = 3,
 				idle_frames = 1, run_frames = 6, attack_frames = 6,
 				color = Color(0.5, 0.32, 0.15),
-				max_hp = 70.0, speed = 150.0, attack_range = 90.0, attack_damage = 22.0,
-				cooldown = 1.5,  ## o mais lento pra bater — tanque, não precisa de ritmo
+				## is_bomber: não bate — chega perto, acende o pavio (a
+				## animação da linha 3, o "shrunk/open") e explode em área,
+				## se matando no processo (ver main.gd _resolve_bomber_blasts).
+				## attack_damage aqui é o dano do estouro, não de um golpe.
+				is_bomber = true,
+				max_hp = 70.0, speed = 150.0, attack_range = 80.0, attack_damage = 30.0,
+				cooldown = 1.5,  ## não chega a valer — ele morre no 1º estouro
 			}
 	## index % COUNT == 0: Guerreiro Vermelho — o inimigo original, tira de 1
 	## linha (sheet_cols fica no default 0 do Player, não precisa setar aqui).

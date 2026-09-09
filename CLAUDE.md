@@ -53,6 +53,10 @@ controles.
 - `scripts/level_banner.gd` — `LevelBanner`: "LEVEL N — TIPO" no meio da
   tela, aparece e some sozinho; só desenha o que `main.gd` manda pronto
   (texto + alfa) — não cronometra nada, mesma regra do HUD
+- `scripts/dynamite.gd` — `Dynamite`: projétil do Goblin da Dinamite, mesmo
+  esquema da `Arrow` (nasce, voa em arco, pousa) — só que pousada tem um
+  pavio (`FUSE_TIME`) antes de estourar em área; `should_blast()` dispara o
+  dano uma vez só, no fim do pavio
 - `project.godot` — `run/main_scene` aponta pra `scenes/title_screen.tscn`
   (tela de título → seleção de personagem → `scenes/main.tscn`)
 
@@ -90,6 +94,15 @@ entre unidades tocam dois objetos, então `_resolve_attacks()` e
 seguem sem lock. Spawn/remoção de inimigo (onda, `[G]`, troca de level)
 também só acontece fora da janela `t.start()`/`wait_to_finish()`: antes do
 dispatch (nasce a onda) ou depois da barreira (morte/limpeza de fase).
+
+Nem todo goblin bate corpo-a-corpo: `is_thrower` (Goblin da Dinamite) arremessa
+uma `Dynamite` de verdade (`scripts/dynamite.gd`, mesmo esquema da `Arrow` do
+arqueiro — nasce em `_throw_dynamite()`, voa em arco, pousa e só depois de um
+pavio estoura em área) em vez de tocar o outro lado; `is_bomber` (Goblin do
+Barril) não bate nenhuma vez — chega perto, acende um pavio próprio
+(`Player.fuse_time`/`fuse_done()`) e estoura em área, se matando no processo
+(`main.gd _resolve_bomber_blasts()`). Os dois ficam de fora do golpe
+corpo-a-corpo genérico em `_resolve_attacks()`.
 
 Ovelhas (`sheep`) e pawns lenhadores (`workers`) são cenário vivo: as ovelhas
 andam a esmo (`Player.wander()`) e os pawns vão do toco à construção com
