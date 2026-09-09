@@ -116,7 +116,6 @@ func update_stats(
 
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
-		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _cpu_line()],
 		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
@@ -125,19 +124,15 @@ func update_stats(
 	queue_redraw()
 
 
-## CPU da máquina + quantas threads a rodada de agora está de fato usando —
-## a demo compara serial x threads, mas o resultado depende de hardware: um
-## PC com poucos núcleos ganha menos com threads que um com muitos.
-func _cpu_line() -> String:
-	var used := _units.size() if _use_threads else 1
-	return "%s   —   %d núcleos lógicos, usando %d agora" % [_cpu_name, _cpu_cores, used]
-
-
-## GPU/SO/versão do Godot — não afeta o comparativo (é tudo CPU/Thread), mas
-## fecha o quadro de "em que máquina isso foi medido" pra quem for comparar
-## print/vídeo de PCs diferentes.
+## Tudo sobre a máquina numa linha só (CPU/núcleos/threads em uso — o que
+## importa pro comparativo — mais GPU/SO/versão do Godot, só contexto de "em
+## que máquina isso foi medido"). Junto em vez de duas linhas separadas pra
+## não esticar o painel.
 func _system_line() -> String:
-	return "%s   —   %s   —   Godot %s" % [_gpu_name, _os_name, _godot_version]
+	var used := _units.size() if _use_threads else 1
+	return "%s (%d núcleos, %d em uso)   —   %s   —   %s   —   Godot %s" % [
+		_cpu_name, _cpu_cores, used, _gpu_name, _os_name, _godot_version,
+	]
 
 
 ## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
