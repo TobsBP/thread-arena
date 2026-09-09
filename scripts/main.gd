@@ -481,7 +481,11 @@ func _process(delta: float) -> void:
 			u.chase(players, u.attack_range, u.attack_cooldown, delta)
 			# Mesmo instante que o arqueiro dispara a flecha: chase() acabou
 			# de decidir "começou a atacar agora" (attack_time == 0.0).
-			if u.is_thrower and u.attack_time == 0.0:
+			# not is_dead(): morrer bem nesse frame congela attack_time em
+			# 0.0 pro resto da animação de morte (step() pula _step_attack()
+			# enquanto is_dead()) — sem o guard, arremessava uma dinamite
+			# por frame até a Thread liberar o cadáver.
+			if u.is_thrower and u.attack_time == 0.0 and not u.is_dead():
 				_throw_dynamite(u)
 		else:
 			u.poll_input(delta)
@@ -490,7 +494,9 @@ func _process(delta: float) -> void:
 			# poll_input() acabou de decidir "começou a atacar agora" (attack_time
 			# vira 0.0 nesse exato frame) — é o ponto certo pra nascer a flecha,
 			# antes de qualquer Thread mexer no resto do estado do player.
-			if u.is_archer and u.attack_time == 0.0:
+			# not is_dead(): mesma armadilha do goblin da dinamite — morto,
+			# attack_time congela em 0.0 e disparava uma flecha por frame.
+			if u.is_archer and u.attack_time == 0.0 and not u.is_dead():
 				_fire_arrow(u)
 			# Segurou até passar de HOLD_THRESHOLD: dispara a skill uma única vez
 			# (só no frame exato em que o hold cruza o limite, não a cada frame) —
