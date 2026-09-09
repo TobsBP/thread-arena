@@ -59,12 +59,16 @@ var _bars: Array[StyleBoxFlat] = []
 ## 0 = tudo, 1 = só o painel de números, 2 = nada. Alterna com [H].
 var detail := 0
 
-## Hardware da máquina que tá rodando — lido uma vez, não muda em runtime.
-## É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a demo mede o
-## ganho de threads, e esse ganho depende de quantos núcleos existem de
-## verdade pra rodar em paralelo.
+## Hardware/software da máquina que tá rodando — lido uma vez, não muda em
+## runtime. É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a
+## demo mede o ganho de threads, e esse ganho depende de quantos núcleos
+## existem de verdade pra rodar em paralelo (o resto — GPU, SO, versão do
+## Godot — é só contexto de "em que máquina isso foi medido").
 var _cpu_name := ""
 var _cpu_cores := 1
+var _gpu_name := ""
+var _os_name := ""
+var _godot_version := ""
 
 @onready var info: RichTextLabel = $Info
 
@@ -80,6 +84,11 @@ func _ready() -> void:
 	if _cpu_name.is_empty():
 		_cpu_name = OS.get_name()  ## alguma plataforma pode não expor o nome do processador
 	_cpu_cores = OS.get_processor_count()
+	_gpu_name = RenderingServer.get_video_adapter_name()
+	if _gpu_name.is_empty():
+		_gpu_name = "GPU desconhecida"
+	_os_name = OS.get_name()
+	_godot_version = Engine.get_version_info().string
 
 
 ## [H]: menos informação na tela.
@@ -108,6 +117,7 @@ func update_stats(
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
 		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _cpu_line()],
+		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
 		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
@@ -121,6 +131,13 @@ func update_stats(
 func _cpu_line() -> String:
 	var used := _units.size() if _use_threads else 1
 	return "%s   —   %d núcleos lógicos, usando %d agora" % [_cpu_name, _cpu_cores, used]
+
+
+## GPU/SO/versão do Godot — não afeta o comparativo (é tudo CPU/Thread), mas
+## fecha o quadro de "em que máquina isso foi medido" pra quem for comparar
+## print/vídeo de PCs diferentes.
+func _system_line() -> String:
+	return "%s   —   %s   —   Godot %s" % [_gpu_name, _os_name, _godot_version]
 
 
 ## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
