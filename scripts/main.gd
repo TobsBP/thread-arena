@@ -190,14 +190,6 @@ func _ready() -> void:
 	# Sem inimigo fixo mais: o level 1 nasce depois do banner (ver _update_level).
 	_start_banner()
 
-
-## Skin escolhido na tela de seleção (PlayerConfig.skins) decide a CLASSE de
-## cada player, não só a cor: "blue" = Guerreiro (golpe especial + bloqueio),
-## "purple" = Arqueira (flecha em arco + chuva + mira), "yellow" = Camponês
-## (faca/martelada + coleta de madeira/ouro), "black" = Lanceiro (lança +
-## bloqueio), "monk" = Curandeiro (cura o aliado mais perto em vez de bater).
-## Cada slot sempre tem os mesmos 6 botões — o 6º é guarda, coleta ou mira,
-## dependendo de qual classe calhou de estar ali.
 func _spawn_players() -> void:
 	var size := PLAY_AREA.size
 	var key_schemes := [
@@ -536,15 +528,12 @@ func _process(delta: float) -> void:
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
 		# Uma Thread por player, criada e destruída a cada frame.
-		# start() dispara e volta na hora; o trabalho já está rodando em paralelo.
-		# ponytail: criar thread por frame custa ~50us contra ~3ms de trabalho.
-		# Se WORK_LOAD cair muito, virar pool de threads persistentes + Semaphore.
 		var threads: Array[Thread] = []
 		for i in units.size():
 			var t := Thread.new()
 			t.start(_step_player.bind(i, delta))
 			threads.append(t)
-		# Barreira: bloqueia até cada thread terminar (e libera os recursos dela).
+		# bloqueia até cada thread terminar
 		for t in threads:
 			t.wait_to_finish()
 	else:
