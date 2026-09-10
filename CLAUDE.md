@@ -36,26 +36,73 @@ controles.
 - `scripts/world/unit_sprite.gd` — `UnitSprite`: um nó de desenho por unidade,
   irmão das árvores dentro do `Decor` y-sorted (é o que faz o player passar
   atrás da árvore). Lê `unit.pos` no `_process()` e desenha sombra, sprite,
-  poeira de corrida, faixa e barra de vida; `map.add_unit()` põe ele na cena
+  poeira de corrida, faixa, barra de vida/estamina e os efeitos de flash/pop/
+  bloqueio/cura/morte; `map.add_unit()` põe ele na cena. O corpo lê a tira de
+  1 linha do Free Pack (`sheet_cols == 0`, um quadro atrás do outro) ou uma
+  grade 2D do pack Update 010 (`sheet_cols > 0`, coluna = quadro, linha =
+  `Player.get_current_row()`) — mesmo padrão de leitura por linha/coluna que
+  a caveira da morte (`DEAD_COLS`/`DEAD_ROWS`) já usava
 - `scripts/player.gd` — `Player` (`RefCounted`): input, trabalho pesado e os
-  timestamps `t_start`/`t_end` que alimentam o gráfico
-- `project.godot` — `run/main_scene` aponta pra `scenes/main.tscn`
+  timestamps `t_start`/`t_end` que alimentam o gráfico. Campos por unidade
+  decidem a classe/tipo (arqueira, curandeiro, lenhador, goblin...): texturas,
+  quadros, alcance/dano, estamina, e `sheet_cols`/`idle_row`/`run_row`/
+  `attack_row` pra sprite em grade
+- `scripts/enemy_types.gd` — `EnemyTypes`: catálogo dos inimigos por level
+  (`kind(index)`), mesmo espírito do `_skin_kit()` de `main.gd` pros players,
+  só que pro time vermelho — textura, quadros (inclusive de grade), status
+- `scripts/level_banner.gd` — `LevelBanner`: "LEVEL N — TIPO" no meio da
+  tela, aparece e some sozinho; só desenha o que `main.gd` manda pronto
+  (texto + alfa) — não cronometra nada, mesma regra do HUD
+- `scripts/dynamite.gd` — `Dynamite`: projétil do Goblin da Dinamite, mesmo
+  esquema da `Arrow` (nasce, voa em arco, pousa) — só que pousada tem um
+  pavio (`FUSE_TIME`) antes de estourar em área; `should_blast()` dispara o
+  dano uma vez só, no fim do pavio
+- `project.godot` — `run/main_scene` aponta pra `scenes/title_screen.tscn`
+  (tela de título → seleção de personagem → `scenes/main.tscn`)
 
-São 3 players controláveis: P1 WASD+F, P2 setas+num0, P3 IJKL+O (a última tecla
-é o ataque), cada um somando o analógico esquerdo e o botão A do controle de
-mesmo índice (device 0/1/2). `[ESPAÇO]` alterna serial/threads.
+São 3 players controláveis: P1 WASD+F+Q, P2 setas+KP_0+KP_1, P3 IJKL+O+U —
+6 teclas cada (`Player.keys`), a 5ª é ataque e a 6ª é guarda/coleta/mira,
+dependendo da classe. Cada um soma o analógico esquerdo e os botões A/B do
+controle de mesmo índice (device 0/1/2). A skin escolhida na seleção de
+personagem decide a CLASSE, não só a cor: Guerreiro (golpe especial + guarda),
+Arqueira (flecha, mira, chuva de flechas), Camponês (coleta madeira/ouro),
+Lanceiro (alcance maior + guarda) e Curandeiro (cura em vez de bater). Estamina
+limita golpe/flecha/cura — sem carga a ação não sai. `poll_input(delta)` decide
+o INÍCIO do ataque/especial na main thread (não no `step()` da Thread), porque
+`main.gd` precisa saber "começou agora" no mesmo frame pra nascer a flecha.
+`[ESPAÇO]` alterna serial/threads.
 
-Além deles há 1 inimigo vermelho (`is_enemy`) que persegue o player mais
-próximo. Ele não tem input: a IA roda na main thread (`Player.chase()`) e só
-escreve `input`/`attack_pressed`. `units` = players + inimigo é o que vira Thread; `players` são
-só os controláveis (usados pela câmera).
+Inimigos são goblins em ondas por level (ver `scripts/enemy_types.gd` e o
+`LevelPhase` de `main.gd`): banner anuncia, a onda nasce, e o level acaba
+quando mata todo mundo OU quando o tempo estoura — o que vier primeiro. Não
+acumula: ao trocar de level, quem sobrou é removido antes da próxima onda.
+`[G]` invoca um inimigo avulso de tipo aleatório (não conta pro "matou tudo"),
+até um teto de segurança — mais inimigo é mais uma Thread, e é isso que a
+tecla existe pra mostrar. Todo inimigo (`is_enemy`) que morre é removido de
+vez (`main.gd _remove_enemy`), diferente do player, que sempre respawna.
+`units` = players + inimigos vivos é o que vira Thread — cresce/encolhe com a
+onda; `players` são só os controláveis (usados pela câmera, nunca muda de
+tamanho).
 
 Ataque em alcance tira vida do outro lado (1 acerto por golpe), nos dois
 sentidos: player bate no inimigo e o inimigo bate nos players — a IA para de
-andar e ataca quando chega em `ATTACK_RANGE`. A zero de vida a unidade tomba e
-some (`death_time`), e volta inteira no `spawn_pos`. Dano e colisão entre
-unidades tocam dois objetos, então `_resolve_attacks()` e `_resolve_collisions()`
-rodam na main thread depois da barreira — as tarefas seguem sem lock.
+andar e ataca quando chega em `ATTACK_RANGE`/`attack_range`. A zero de vida a
+unidade tomba e some (`death_time`); player volta inteiro no `spawn_pos`,
+inimigo é removido de `units`/`bodies` e perde o nó de desenho. Dano e colisão
+entre unidades tocam dois objetos, então `_resolve_attacks()` e
+`_resolve_collisions()` rodam na main thread depois da barreira — as tarefas
+seguem sem lock. Spawn/remoção de inimigo (onda, `[G]`, troca de level)
+também só acontece fora da janela `t.start()`/`wait_to_finish()`: antes do
+dispatch (nasce a onda) ou depois da barreira (morte/limpeza de fase).
+
+Nem todo goblin bate corpo-a-corpo: `is_thrower` (Goblin da Dinamite) arremessa
+uma `Dynamite` de verdade (`scripts/dynamite.gd`, mesmo esquema da `Arrow` do
+arqueiro — nasce em `_throw_dynamite()`, voa em arco, pousa e só depois de um
+pavio estoura em área) em vez de tocar o outro lado; `is_bomber` (Goblin do
+Barril) não bate nenhuma vez — chega perto, acende um pavio próprio
+(`Player.fuse_time`/`fuse_done()`) e estoura em área, se matando no processo
+(`main.gd _resolve_bomber_blasts()`). Os dois ficam de fora do golpe
+corpo-a-corpo genérico em `_resolve_attacks()`.
 
 Ovelhas (`sheep`) e pawns lenhadores (`workers`) são cenário vivo: as ovelhas
 andam a esmo (`Player.wander()`) e os pawns vão do toco à construção com

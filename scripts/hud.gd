@@ -52,18 +52,23 @@ var _ms: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _fps: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _units: Array[Player] = []
 var _frame_t0 := 0
+var _level := 1
 var _history: Array[PackedFloat32Array] = []
 ## StyleBox por unidade: só pra ter canto arredondado sem realocar por frame.
 var _bars: Array[StyleBoxFlat] = []
 ## 0 = tudo, 1 = só o painel de números, 2 = nada. Alterna com [H].
 var detail := 0
 
-## Hardware da máquina que tá rodando — lido uma vez, não muda em runtime.
-## É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a demo mede o
-## ganho de threads, e esse ganho depende de quantos núcleos existem de
-## verdade pra rodar em paralelo.
+## Hardware/software da máquina que tá rodando — lido uma vez, não muda em
+## runtime. É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a
+## demo mede o ganho de threads, e esse ganho depende de quantos núcleos
+## existem de verdade pra rodar em paralelo (o resto — GPU, SO, versão do
+## Godot — é só contexto de "em que máquina isso foi medido").
 var _cpu_name := ""
 var _cpu_cores := 1
+var _gpu_name := ""
+var _os_name := ""
+var _godot_version := ""
 
 @onready var info: RichTextLabel = $Info
 
@@ -79,6 +84,11 @@ func _ready() -> void:
 	if _cpu_name.is_empty():
 		_cpu_name = OS.get_name()  ## alguma plataforma pode não expor o nome do processador
 	_cpu_cores = OS.get_processor_count()
+	_gpu_name = RenderingServer.get_video_adapter_name()
+	if _gpu_name.is_empty():
+		_gpu_name = "GPU desconhecida"
+	_os_name = OS.get_name()
+	_godot_version = Engine.get_version_info().string
 
 
 ## [H]: menos informação na tela.
@@ -94,17 +104,19 @@ func update_stats(
 	fps: Dictionary[bool, float],
 	units: Array[Player],
 	frame_t0: int,
+	level: int,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
 	_fps = fps
 	_units = units
 	_frame_t0 = frame_t0
+	_level = level
 	_record()
 
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
-		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _cpu_line()],
+		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
 		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
@@ -112,12 +124,15 @@ func update_stats(
 	queue_redraw()
 
 
-## CPU da máquina + quantas threads a rodada de agora está de fato usando —
-## a demo compara serial x threads, mas o resultado depende de hardware: um
-## PC com poucos núcleos ganha menos com threads que um com muitos.
-func _cpu_line() -> String:
+## Tudo sobre a máquina numa linha só (CPU/núcleos/threads em uso — o que
+## importa pro comparativo — mais GPU/SO/versão do Godot, só contexto de "em
+## que máquina isso foi medido"). Junto em vez de duas linhas separadas pra
+## não esticar o painel.
+func _system_line() -> String:
 	var used := _units.size() if _use_threads else 1
-	return "%s   —   %d núcleos lógicos, usando %d agora" % [_cpu_name, _cpu_cores, used]
+	return "%s (%d núcleos, %d em uso)   —   %s   —   %s   —   Godot %s" % [
+		_cpu_name, _cpu_cores, used, _gpu_name, _os_name, _godot_version,
+	]
 
 
 ## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
@@ -125,6 +140,13 @@ func _record() -> void:
 	while _history.size() < _units.size():
 		_history.append(PackedFloat32Array())
 		_bars.append(_bar_box())
+	# Onda de goblin morreu: units encolhe. Corta o excedente pra
+	# _draw_history() nunca indexar _units além do fim — o índice que sobra
+	# passa a pertencer a outra unidade, então o gráfico dela pula uma vez
+	# (cosmético, não trava).
+	while _history.size() > _units.size():
+		_history.pop_back()
+		_bars.pop_back()
 	for i in _units.size():
 		var h := _history[i]
 		h.append((_units[i].t_end - _units[i].t_start) / 1000.0)
@@ -141,10 +163,12 @@ func _bar_box() -> StyleBoxFlat:
 
 func _mode_title() -> String:
 	if _use_threads:
-		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas[/font_size]" % [
-			GOOD, _units.size(),
+		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas — LEVEL %d[/font_size]" % [
+			GOOD, _units.size(), _level,
 		]
-	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread[/font_size]" % BAD
+	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread — LEVEL %d[/font_size]" % [
+		BAD, _level,
+	]
 
 
 ## Só compara depois de ter medido os dois modos.

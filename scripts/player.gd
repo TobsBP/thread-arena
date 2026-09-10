@@ -34,6 +34,10 @@ var is_enemy := false
 var is_archer := false  ## dispara Arrow de verdade (ver main.gd _fire_arrow)
 var is_sheep := false  ## morte mostra baforada em vez de caveira (ver UnitSprite)
 var is_monk := false  ## "ataque" cura o aliado mais perto em vez de bater (ver main.gd)
+var is_thrower := false  ## inimigo à distância: "ataque" arremessa Dynamite em vez de bater (ver main.gd)
+var is_bomber := false  ## chega perto e explode em vez de bater (ver main.gd _resolve_bomber_blasts)
+var bomber_fuse := 0.6  ## segundos entre "atacar" (chase()) e o estouro (só is_bomber)
+var fuse_time := -1.0  ## >= 0 = pavio contando; ver _step_fuse() e Player.fuse_done()
 var input := Vector2.ZERO  ## escrito na main thread, lido na thread do player
 var heat := 0.0  ## resultado do trabalho pesado, só pra provar que rodou
 var max_hp := 100.0
@@ -82,6 +86,7 @@ var gold := 0
 var _action2_prev := false  ## detecta a borda de subida do 2º botão (guarda/coleta)
 var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
 var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
+var attack_cooldown := 1.2  ## inimigo: respiro entre golpes — varia por tipo (ver EnemyTypes)
 var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
 var heal_fx_time := -1.0  ## >= 0 = tocando o efeito de cura (ver main.gd _resolve_meat_pickup)
 var hit_flash_time := -1.0  ## >= 0 = piscando vermelho (acabou de tomar dano)
@@ -95,6 +100,13 @@ var is_charging := false  ## segurou além do 1º golpe: parado carregando o esp
 var max_stamina := 100.0
 var stamina := 100.0  ## consumida por golpe/cura/flecha, regenera sozinha (ver poll_input)
 var frame_size := Vector2(192, 192)
+## Sprite em grade (pack Update 010): 0 = tira de 1 linha, comportamento de
+## sempre; > 0 = número de colunas, e idle_row/run_row/attack_row dizem qual
+## linha da grade cada animação usa (ver EnemyTypes e UnitSprite._draw_body).
+var sheet_cols := 0
+var idle_row := 0
+var run_row := 0
+var attack_row := 0
 var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
@@ -157,9 +169,16 @@ func chase(targets: Array[Player], attack_range: float, cooldown: float,
 		return
 	var to_target := best.pos - pos
 	var in_range := to_target.length() < attack_range
-	attack_pressed = in_range and attack_cd <= 0.0
+	attack_pressed = in_range and attack_cd <= 0.0 and not is_attacking()
 	if attack_pressed:
 		attack_cd = cooldown
+		# Início do ataque decidido aqui, igual poll_input() faz pro player
+		# desde o rework de estamina/golpe especial — _step_attack() (na
+		# Thread) só avança o ciclo até o fim, não inicia mais sozinho.
+		attack_time = 0.0
+		attack_hit = false
+		if is_bomber:
+			fuse_time = 0.0  ## acendeu: main.gd._resolve_bomber_blasts() cuida do resto
 	input = Vector2.ZERO if in_range else to_target.normalized()
 	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
 	facing_right = to_target.x >= 0.0
@@ -308,6 +327,7 @@ func step(delta: float, work_load: int, area: Rect2,
 	_step_hit_flash(delta)
 	_step_hit_pop(delta)
 	_step_block_fx(delta)
+	_step_fuse(delta)
 	if input.x > 0.05:
 		facing_right = true
 	elif input.x < -0.05:
@@ -415,6 +435,23 @@ func _step_block_fx(delta: float) -> void:
 		block_fx_time = -1.0
 
 
+## Só conta — quem decide o que fazer quando o pavio termina é main.gd
+## (_resolve_bomber_blasts, depois da barreira: mexe no bomber E nos players).
+func _step_fuse(delta: float) -> void:
+	if fuse_time < 0.0:
+		return
+	fuse_time += delta
+
+
+## true na primeira checagem depois que o pavio passa de bomber_fuse, false
+## depois disso (consome o pavio) — mesmo padrão do Dynamite.should_blast().
+func fuse_done() -> bool:
+	if fuse_time < 0.0 or fuse_time < bomber_fuse:
+		return false
+	fuse_time = -1.0
+	return true
+
+
 func is_blocking_fx() -> bool:
 	return block_fx_time >= 0.0
 
@@ -460,3 +497,14 @@ func get_current_frame() -> int:
 	if total <= 0:
 		return 0
 	return int(anim_time * anim_fps) % total
+
+
+## Linha da grade pra animação atual — só importa quando sheet_cols > 0
+## (goblins do Update 010); numa tira de 1 linha (sheet_cols == 0) o
+## UnitSprite ignora isto e desenha direto na linha 0.
+func get_current_row() -> int:
+	if is_attacking():
+		return attack_row
+	if is_running():
+		return run_row
+	return idle_row

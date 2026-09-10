@@ -21,14 +21,14 @@ const BLUE_GUARD := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (F
 const PURPLE_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Archer/Archer_Idle.png")
 const PURPLE_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Archer/Archer_Run.png")
 const PURPLE_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Purple Units/Archer/Archer_Shoot.png")
-const RED_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Idle.png")
-const RED_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Run.png")
-const RED_ATK := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Red Units/Warrior/Warrior_Attack1.png")
+## Vermelho (o time inimigo) virou o catálogo de EnemyTypes — cada level
+## soma um tipo (Guerreiro → goblins do Update 010).
 const ATTACK_RANGE := 90.0
 const ATTACK_DAMAGE := 25.0
 const SPECIAL_DAMAGE_MULT := 2.0  ## golpe especial (segurar) causa o dobro
 const GUARD_DAMAGE_MULT := 0.2  ## bloqueando, só 20% do dano passa
 const KNOCKBACK_DIST := 18.0  ## empurrão instantâneo de quem apanha, pra dar peso
+const BOMBER_BLAST_RADIUS := 90.0  ## alcance do estouro do Goblin do Barril
 const CAM_SHAKE_HIT := 3.0  ## tremor da câmera num golpe normal
 const CAM_SHAKE_SPECIAL := 7.0  ## e num golpe especial/flecha — mais forte
 const CAM_SHAKE_DECAY := 10.0  ## por segundo
@@ -112,6 +112,23 @@ const HOLD_THRESHOLD := 0.5
 const RAIN_COUNT := 7
 const RAIN_SPREAD := 130.0  ## raio da área onde as flechas caem
 
+## Levels de goblin (ver EnemyTypes): cada fase soma um tipo novo, um banner
+## grande anuncia e a fase acaba quando mata tudo OU quando o tempo estoura
+## — o que vier primeiro. Não acumula: ao trocar de level, quem sobrou
+## (onda ou avulso do [G]) é removido, pra próxima fase começar limpa.
+enum LevelPhase { BANNER, COMBAT, INTERMISSION }
+const BANNER_DURATION := 2.2
+const INTERMISSION_DURATION := 1.0
+const LEVEL_TIME_LIMIT := 30.0  ## timeout da fase, mesmo sem matar tudo
+const WAVE_BASE := 2  ## inimigos no level 1; sobe 1 por level
+## Teto por onda — acima disso, criar+destruir 1 Thread por unidade por
+## frame passa a pesar mais que o próprio trabalho (WORK_LOAD é fixo de
+## propósito), e threads deixa de ganhar de serial. É parte da lição, mas
+## sem teto a demo trava de vez em máquina fraca.
+const MAX_WAVE_ENEMIES := 8
+const MAX_LIVE_ENEMIES := 14  ## teto do [G]: onda + avulsos juntos
+const MIN_ENEMY_SPAWN_DIST := 260.0  ## nasce longe dos players, não em cima
+
 @export var use_threads := false
 
 var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes)
@@ -123,6 +140,7 @@ var workers: Array[Player] = []
 ## Tudo que se esbarra: units + sheep + workers, montado uma vez no _ready().
 var bodies: Array[Player] = []
 var arrows: Array[Arrow] = []  ## flechas em voo; roda fora do esquema de Threads
+var dynamites: Array[Dynamite] = []  ## dinamites arremessadas pelo Goblin da Dinamite
 var meat_drops: Array[MeatDrop] = []  ## carne largada por ovelha morta, no chão
 var damage_numbers: Array[DamageNumber] = []  ## "-25"/"+30" flutuando
 var cam_shake := 0.0  ## magnitude do tremor de câmera; decai sozinho (ver _update_camera)
@@ -132,8 +150,18 @@ var _frame_t0 := 0
 var fps_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var ms_by_mode: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 
+var level := 1
+var level_phase := LevelPhase.BANNER
+var phase_timer := 0.0
+var level_timer := 0.0  ## segundos em combate; dispara o timeout do level
+var _wave_enemies: Array[Player] = []  ## só os da onda atual — decide "matou tudo"
+## Único vínculo Player→nó de desenho (ArenaMap.add_unit não guarda
+## referência nenhuma) — é o que permite remover um goblin de vez.
+var _enemy_sprites: Dictionary[Player, UnitSprite] = {}
+
 @onready var map: ArenaMap = $ArenaMap
 @onready var hud: Control = $UI/HUD
+@onready var banner: LevelBanner = $UI/LevelBanner
 @onready var cam: Camera2D = $Camera
 
 
@@ -142,7 +170,6 @@ func _ready() -> void:
 	DisplayServer.window_set_vsync_mode(DisplayServer.VSYNC_DISABLED)
 	Engine.max_fps = 0
 	_spawn_players()
-	_spawn_enemy()
 	_spawn_sheep()
 	_spawn_workers()
 	bodies.assign(units)
@@ -160,6 +187,8 @@ func _ready() -> void:
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
 	cam.position = WORLD * 0.5
+	# Sem inimigo fixo mais: o level 1 nasce depois do banner (ver _update_level).
+	_start_banner()
 
 
 ## Skin escolhido na tela de seleção (PlayerConfig.skins) decide a CLASSE de
@@ -212,7 +241,7 @@ func _spawn_players() -> void:
 		p.hp = p.max_hp
 		p.speed = kit.get("speed", Player.SPEED)
 		players.append(p)
-	units.assign(players)  # o inimigo entra depois, em _spawn_enemy()
+	units.assign(players)  # o inimigo entra depois, quando o level 1 nasce (ver _spawn_wave)
 
 
 ## Kit completo de uma skin: cor/ribbon + textura e quadros de idle/run/ataque,
@@ -272,14 +301,142 @@ func _skin_kit(skin: String) -> Dictionary:
 	}
 
 
-## Um inimigo vermelho no meio do mundo: mais uma Thread no mesmo esquema.
-func _spawn_enemy() -> void:
-	var e := Player.new(PLAY_AREA.position + PLAY_AREA.size * Vector2(0.5, 0.12),
-			Color(0.85, 0.25, 0.25), [0, 0, 0, 0, 0, 0], -1, RED_IDLE, RED_RUN, RED_ATK)
+## --- Level director --------------------------------------------------
+## Roda inteiro na main thread. Só mexe em units/bodies antes do dispatch
+## (spawn da onda, no início do _process) ou depois da barreira
+## (_resolve_attacks já tirou quem morreu; aqui só se limpa sobra na troca
+## de fase) — nunca entre um t.start() e o wait_to_finish() correspondente.
+
+func _update_level(delta: float) -> void:
+	phase_timer += delta
+	match level_phase:
+		LevelPhase.BANNER:
+			if phase_timer >= BANNER_DURATION:
+				_start_combat()
+		LevelPhase.COMBAT:
+			level_timer += delta
+			if _wave_enemies.is_empty() or level_timer >= LEVEL_TIME_LIMIT:
+				_end_combat()
+		LevelPhase.INTERMISSION:
+			if phase_timer >= INTERMISSION_DURATION:
+				level += 1
+				_start_banner()
+	_update_banner()
+
+
+## Sobe rápido, segura, desce no fim — só durante o BANNER. Quem cronometra
+## é main.gd (o HUD/banner não medem nada, só formatam o que chega pronto).
+func _update_banner() -> void:
+	var alpha := 0.0
+	if level_phase == LevelPhase.BANNER:
+		var t := phase_timer / BANNER_DURATION
+		alpha = clampf(minf(t / 0.15, (1.0 - t) / 0.25), 0.0, 1.0)
+	banner.show_banner(_level_title(level), alpha)
+
+
+func _level_title(lvl: int) -> String:
+	return "LEVEL %d — %s" % [lvl, EnemyTypes.kind(lvl - 1).title]
+
+
+func _start_banner() -> void:
+	level_phase = LevelPhase.BANNER
+	phase_timer = 0.0
+
+
+func _start_combat() -> void:
+	level_phase = LevelPhase.COMBAT
+	phase_timer = 0.0
+	level_timer = 0.0
+	_spawn_wave(level)
+
+
+func _end_combat() -> void:
+	level_phase = LevelPhase.INTERMISSION
+	phase_timer = 0.0
+	_clear_enemies()  ## não acumula: some com a onda (e qualquer avulso do [G]) antes da próxima
+
+
+## count cresce com o level até MAX_WAVE_ENEMIES; passar do fim do catálogo
+## repete os tipos com hp/dano escalados (ver EnemyTypes.kind).
+func _spawn_wave(lvl: int) -> void:
+	var kind := EnemyTypes.kind(lvl - 1)
+	var scale := 1.0 + 0.15 * floorf(float(lvl - 1) / EnemyTypes.COUNT)
+	var count := clampi(WAVE_BASE + lvl - 1, WAVE_BASE, MAX_WAVE_ENEMIES)
+	for _i in count:
+		_wave_enemies.append(_spawn_enemy_of_type(kind, _random_enemy_spot(), scale))
+
+
+## [G]: um inimigo avulso, tipo aleatório entre os já vistos até este level —
+## não entra em _wave_enemies, então não conta pro "matou tudo" nem trava o
+## level; só engorda a demo (mais uma Thread na tela) até o teto de segurança.
+func _summon_random_enemy() -> void:
+	if level_phase != LevelPhase.COMBAT:
+		return
+	if units.size() - players.size() >= MAX_LIVE_ENEMIES:
+		return
+	var idx := randi() % mini(level, EnemyTypes.COUNT)
+	_spawn_enemy_of_type(EnemyTypes.kind(idx), _random_enemy_spot())
+
+
+## Ponto aleatório na área andável, longe dos players — a arena é grande, então
+## poucas tentativas bastam; sem sorte em 20, nasce no centro mesmo.
+func _random_enemy_spot() -> Vector2:
+	for _try in 20:
+		var pt := PLAY_AREA.position + Vector2(randf(), randf()) * PLAY_AREA.size
+		var far := true
+		for p in players:
+			if pt.distance_to(p.pos) < MIN_ENEMY_SPAWN_DIST:
+				far = false
+				break
+		if far:
+			return pt
+	return PLAY_AREA.position + PLAY_AREA.size * 0.5
+
+
+func _spawn_enemy_of_type(kind: Dictionary, spot: Vector2, scale := 1.0) -> Player:
+	var e := Player.new(spot, kind.color, [0, 0, 0, 0, 0, 0], -1,
+			kind.idle, kind.run, kind.attack,
+			kind.idle_frames, kind.run_frames, kind.attack_frames)
 	e.is_enemy = true
-	e.ribbon_y = 196.0  ## faixa vermelha
-	e.speed = ENEMY_SPEED
+	e.ribbon_y = 196.0
+	e.speed = kind.get("speed", ENEMY_SPEED)
+	e.max_hp = kind.get("max_hp", 60.0) * scale
+	e.hp = e.max_hp
+	e.attack_range = kind.get("attack_range", ATTACK_RANGE)
+	e.attack_damage = kind.get("attack_damage", ATTACK_DAMAGE) * scale
+	e.attack_cooldown = kind.get("cooldown", ENEMY_COOLDOWN)
+	e.is_thrower = kind.get("is_thrower", false)
+	e.is_bomber = kind.get("is_bomber", false)
+	e.bomber_fuse = kind.get("bomber_fuse", e.bomber_fuse)
+	e.frame_size = kind.get("frame_size", Vector2(192, 192))
+	e.sheet_cols = kind.get("sheet_cols", 0)
+	e.idle_row = kind.get("idle_row", 0)
+	e.run_row = kind.get("run_row", 0)
+	e.attack_row = kind.get("attack_row", 0)
 	units.append(e)
+	bodies.append(e)
+	var sprite := UnitSprite.create(e)
+	map.add_unit(sprite)
+	_enemy_sprites[e] = sprite
+	return e
+
+
+## Some de vez: tira de units/bodies/_wave_enemies e libera o nó de desenho.
+## Chamado só depois da barreira (_resolve_attacks) ou entre fases
+## (_clear_enemies) — nunca com alguma Thread ainda rodando.
+func _remove_enemy(e: Player) -> void:
+	units.erase(e)
+	bodies.erase(e)
+	_wave_enemies.erase(e)
+	var sprite: UnitSprite = _enemy_sprites.get(e)
+	if sprite:
+		sprite.queue_free()
+		_enemy_sprites.erase(e)
+
+
+func _clear_enemies() -> void:
+	for e in units.filter(func(u: Player) -> bool: return u.is_enemy):
+		_remove_enemy(e)
 
 
 ## Ovelhas espalhadas pela ilha: só decoração viva, sem input nem thread.
@@ -316,10 +473,20 @@ func _spawn_workers() -> void:
 
 
 func _process(delta: float) -> void:
+	_update_level(delta)
+
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
-			u.chase(players, ATTACK_RANGE, ENEMY_COOLDOWN, delta)
+			u.chase(players, u.attack_range, u.attack_cooldown, delta)
+			# Mesmo instante que o arqueiro dispara a flecha: chase() acabou
+			# de decidir "começou a atacar agora" (attack_time == 0.0).
+			# not is_dead(): morrer bem nesse frame congela attack_time em
+			# 0.0 pro resto da animação de morte (step() pula _step_attack()
+			# enquanto is_dead()) — sem o guard, arremessava uma dinamite
+			# por frame até a Thread liberar o cadáver.
+			if u.is_thrower and u.attack_time == 0.0 and not u.is_dead():
+				_throw_dynamite(u)
 		else:
 			u.poll_input(delta)
 			if u.is_archer and u.is_aiming:
@@ -327,7 +494,9 @@ func _process(delta: float) -> void:
 			# poll_input() acabou de decidir "começou a atacar agora" (attack_time
 			# vira 0.0 nesse exato frame) — é o ponto certo pra nascer a flecha,
 			# antes de qualquer Thread mexer no resto do estado do player.
-			if u.is_archer and u.attack_time == 0.0:
+			# not is_dead(): mesma armadilha do goblin da dinamite — morto,
+			# attack_time congela em 0.0 e disparava uma flecha por frame.
+			if u.is_archer and u.attack_time == 0.0 and not u.is_dead():
 				_fire_arrow(u)
 			# Segurou até passar de HOLD_THRESHOLD: dispara a skill uma única vez
 			# (só no frame exato em que o hold cruza o limite, não a cada frame) —
@@ -343,6 +512,10 @@ func _process(delta: float) -> void:
 	for a in arrows:
 		a.step(delta)
 	arrows = arrows.filter(func(a: Arrow) -> bool: return not a.is_expired() and not a.hit)
+
+	for d in dynamites:
+		d.step(delta)
+	dynamites = dynamites.filter(func(d: Dynamite) -> bool: return not d.is_expired())
 
 	for m in meat_drops:
 		m.step(delta)
@@ -380,6 +553,8 @@ func _process(delta: float) -> void:
 
 	_resolve_attacks()
 	_resolve_arrow_hits()
+	_resolve_dynamite_hits()
+	_resolve_bomber_blasts()
 	_resolve_monk_heals()
 	_resolve_monk_aura(delta)
 	_resolve_sheep_hits()
@@ -390,7 +565,7 @@ func _process(delta: float) -> void:
 	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera(delta)
-	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0)
+	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level)
 	queue_redraw()  ## só as flechas usam _draw() agora (ver comentário lá)
 
 
@@ -403,16 +578,20 @@ func _step_player(i: int, delta: float) -> void:
 ## thread depois da barreira — as tarefas continuam sem lock. Vale pros dois
 ## lados: player bate no inimigo e o inimigo bate nos players.
 func _resolve_attacks() -> void:
+	var to_remove: Array[Player] = []
 	for u in units:
 		if u.is_dead():
-			# ponytail: respawn em vez de remover — a demo precisa de todos.
 			if u.death_time > Player.DEATH_TIME:
-				u.hp = u.max_hp
-				u.death_time = -1.0
-				u.pos = u.spawn_pos
+				if u.is_enemy:
+					to_remove.append(u)  ## onda: inimigo morto não volta, só some
+				else:
+					# ponytail: respawn em vez de remover — a demo precisa de todos.
+					u.hp = u.max_hp
+					u.death_time = -1.0
+					u.pos = u.spawn_pos
 			continue
-		if u.is_archer or u.is_monk:
-			continue  ## arqueira é à distância (flecha); curandeiro não briga
+		if u.is_archer or u.is_monk or u.is_thrower or u.is_bomber:
+			continue  ## arqueira/dinamite são à distância; curandeiro não briga; barril explode
 		if not u.is_attacking() or u.attack_hit:
 			continue
 		for v in units:
@@ -434,6 +613,8 @@ func _resolve_attacks() -> void:
 				if v.hp <= 0.0:
 					v.hp = 0.0
 					v.death_time = 0.0
+	for u in to_remove:
+		_remove_enemy(u)
 
 
 ## Empurrão instantâneo de quem apanha, na direção oposta a quem bateu — dá
@@ -486,6 +667,56 @@ func _resolve_arrow_hits() -> void:
 				s.death_time = 0.0
 				meat_drops.append(MeatDrop.new(s.pos))
 				break
+
+
+## Estouro em área: dano só quando should_blast() vira true (uma vez só, no
+## fim do pavio — ver Dynamite) e só nos players dentro de BLAST_RADIUS do
+## ponto onde ela pousou. Roda depois da barreira, igual ao resto do dano.
+func _resolve_dynamite_hits() -> void:
+	for d in dynamites:
+		if not d.should_blast():
+			continue
+		_shake_camera(CAM_SHAKE_SPECIAL)
+		for p in players:
+			if p.is_dead():
+				continue
+			if p.pos.distance_to(d.target_pos) > Dynamite.BLAST_RADIUS:
+				continue
+			p.hp -= d.damage
+			p.hit_flash_time = 0.0
+			p.hit_pop_time = 0.0
+			_knockback(p, d.target_pos)
+			damage_numbers.append(DamageNumber.new(p.pos, d.damage))
+			if p.hp <= 0.0:
+				p.hp = 0.0
+				p.death_time = 0.0
+
+
+## Goblin do Barril: não bate, chega perto e explode — chase() já acendeu o
+## pavio (fuse_time = 0.0) no mesmo instante que decidiu atacar; aqui só
+## checamos se ele já terminou (fuse_done(), uma vez só). Estoura em área
+## nos players por perto E mata ele mesmo — mexe em dois objetos ao mesmo
+## tempo, então roda depois da barreira, igual ao resto do dano.
+func _resolve_bomber_blasts() -> void:
+	for u in units:
+		if u.is_dead() or not u.is_bomber or not u.fuse_done():
+			continue
+		_shake_camera(CAM_SHAKE_SPECIAL)
+		for p in players:
+			if p.is_dead():
+				continue
+			if p.pos.distance_to(u.pos) > BOMBER_BLAST_RADIUS:
+				continue
+			p.hp -= u.attack_damage
+			p.hit_flash_time = 0.0
+			p.hit_pop_time = 0.0
+			_knockback(p, u.pos)
+			damage_numbers.append(DamageNumber.new(p.pos, u.attack_damage))
+			if p.hp <= 0.0:
+				p.hp = 0.0
+				p.death_time = 0.0
+		u.hp = 0.0
+		u.death_time = 0.0  ## suicídio: o próprio estouro também mata ele
 
 
 ## Curandeiro: em vez de bater, o "ataque" cura o aliado ferido mais perto
@@ -640,6 +871,30 @@ func _fire_arrow(p: Player) -> void:
 	arrows.append(Arrow.new(from, from + dir * SHOT_RANGE, Arrow.Mode.SHOT))
 
 
+## Nasce na posição do goblin, mirando o player vivo mais perto (o mesmo alvo
+## que chase() já escolheu pra parar e atacar — recalculado aqui porque
+## chase() não expõe quem escolheu). Sem alvo vivo, não arremessa nada.
+func _throw_dynamite(u: Player) -> void:
+	var target := _nearest_player(u.pos)
+	if target == null:
+		return
+	var from := u.pos + Vector2(0, -20)
+	dynamites.append(Dynamite.new(from, target.pos, u.attack_damage))
+
+
+func _nearest_player(from: Vector2) -> Player:
+	var best: Player = null
+	var best_d := INF
+	for p in players:
+		if p.is_dead():
+			continue
+		var d := from.distance_squared_to(p.pos)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
 ## Skill: RAIN_COUNT flechas saem do arqueiro e fazem o mesmo lançamento
 ## oblíquo, cada uma mirando um ponto espalhado ao redor do inimigo mais
 ## próximo (ou de um ponto à frente, sem alvo) — arco mais alto/longo
@@ -694,6 +949,8 @@ func _span_usec() -> int:
 func _draw() -> void:
 	for a in arrows:
 		_draw_arrow(a)
+	for d in dynamites:
+		_draw_dynamite(d)
 	for m in meat_drops:
 		var tex := MeatDrop.TEXTURE
 		draw_texture(tex, m.pos - tex.get_size() * 0.5)
@@ -733,6 +990,30 @@ func _draw_arrow(a: Arrow) -> void:
 
 	draw_set_transform(a.draw_pos(), a.visual_angle, Vector2.ONE)
 	draw_texture(Arrow.TEXTURE, -Arrow.TEXTURE.get_size() * 0.5)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Voando: mesma sombra da flecha + o graveto girando. Pousada com o pavio
+## queimando, fica parada (sem desenho extra — o pavio "chiando" já é a
+## textura em si girando, ver Dynamite.spin_frame). No instante do estouro,
+## troca pro mesmo estouro que a morte usa (UnitSprite._draw_explosion).
+func _draw_dynamite(d: Dynamite) -> void:
+	if d.is_exploding():
+		var frame := d.explosion_frame()
+		var s := Dynamite.EXPLOSION_SIZE
+		draw_texture_rect_region(Dynamite.EXPLOSION_TEXTURE,
+				Rect2(d.target_pos - Vector2(s, s) * 0.5, Vector2(s, s)),
+				Rect2(frame * s, 0, s, s))
+		return
+	if d.height > 0.5:
+		draw_set_transform(d.pos, 0.0, Vector2(1.0, 0.35))
+		draw_circle(Vector2.ZERO, 6.0, Color(0.0, 0.0, 0.0, 0.25))
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	var frame := d.spin_frame()
+	var s := Dynamite.FRAME_SIZE
+	draw_set_transform(d.draw_pos(), d.visual_angle, Vector2.ONE)
+	draw_texture_rect_region(Dynamite.TEXTURE, Rect2(-s * 0.5, -s * 0.5, s, s),
+			Rect2(frame * s, 0, s, s))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
@@ -812,6 +1093,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_H:
 		hud.cycle_detail()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_G:
+		_summon_random_enemy()
 	elif event.is_action_pressed("ui_cancel"):
 		## ESC: volta para a seleção de personagem.
 		get_tree().change_scene_to_file("res://scenes/character_select.tscn")

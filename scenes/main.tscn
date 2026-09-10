@@ -3,6 +3,7 @@
 [ext_resource type="Script" uid="uid://ctq56gt8uwpgm" path="res://scripts/main.gd" id="1"]
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/world/arena_map.tscn" id="3"]
+[ext_resource type="Script" path="res://scripts/level_banner.gd" id="4"]
 
 [node name="Main" type="Node2D" unique_id=452181618]
 script = ExtResource("1")
@@ -20,3 +21,11 @@ offset_left = 0.0
 offset_top = 0.0
 offset_right = 472.0
 offset_bottom = 436.0
+
+[node name="LevelBanner" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 2
+script = ExtResource("4")
