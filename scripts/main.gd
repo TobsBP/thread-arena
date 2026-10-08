@@ -480,7 +480,10 @@ func _process(delta: float) -> void:
 			if u.is_thrower and u.attack_time == 0.0 and not u.is_dead():
 				_throw_dynamite(u)
 		else:
-			u.poll_input(delta)
+			if u.is_bot:
+				u.bot_think(units, players, map, SHOT_RANGE, delta)
+			else:
+				u.poll_input(delta)
 			if u.is_archer and u.is_aiming:
 				_update_aim_lock(u)
 			# poll_input() acabou de decidir "começou a atacar agora" (attack_time
@@ -1085,6 +1088,12 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G:
 		_summon_random_enemy()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_B:
+		# Os três juntos: liga/desliga o bot no lugar do teclado/controle.
+		var on := not players[0].is_bot
+		for p in players:
+			p.is_bot = on
 	elif event.is_action_pressed("ui_cancel"):
 		## ESC: volta para a seleção de personagem.
 		get_tree().change_scene_to_file("res://scenes/character_select.tscn")

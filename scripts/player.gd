@@ -24,6 +24,13 @@ const STAMINA_REGEN_RATE := 20.0  ## por segundo, sempre correndo (mesmo atacand
 const ATTACK_STAMINA_COST := 20.0  ## golpe normal / flecha / pulso de cura
 const SPECIAL_STAMINA_COST := 40.0  ## golpe especial custa o dobro, como o dano
 
+## Bot ([B] em main.gd): aperta os mesmos "botões" que o humano, via
+## _apply_controls() — estamina, especial e guarda valem igual pros dois.
+const BOT_FLEE_HP := 0.35  ## abaixo dessa fração da vida, foge pro Curandeiro (se tiver)
+const BOT_DANGER_DIST := 300.0  ## goblin mais perto que isso conta como ameaça
+const BOT_KITE_DIST := 250.0  ## arqueira: goblin mais perto que isso, ela se afasta
+const BOT_GUARD_MARGIN := 30.0  ## folga sobre o alcance do goblin pra erguer a guarda
+
 var pos: Vector2
 var spawn_pos: Vector2  ## volta pra cá ao renascer
 var color: Color
@@ -31,6 +38,7 @@ var keys: PackedInt32Array  ## [cima, baixo, esquerda, direita, atacar, guarda] 
 var joy_device: int
 var speed := SPEED
 var is_enemy := false
+var is_bot := false  ## bot_think() no lugar de poll_input() — ligado por [B] em main.gd
 var is_archer := false  ## dispara Arrow de verdade (ver main.gd _fire_arrow)
 var is_sheep := false  ## morte mostra baforada em vez de caveira (ver UnitSprite)
 var is_monk := false  ## "ataque" cura o aliado mais perto em vez de bater (ver main.gd)
@@ -214,12 +222,128 @@ func haul(delta: float) -> void:
 	facing_right = to_target.x >= 0.0
 
 
-## Main thread only: a classe Input não é thread-safe. `delta` só serve pra
-## contar attack_hold_time (a skill de segurar o ataque — ver main.gd).
+## Main thread only: a classe Input não é thread-safe. Só lê o teclado/controle
+## — o que os botões fazem é _apply_controls(), o mesmo que o bot usa.
 func poll_input(delta: float) -> void:
+	var kb := Vector2(
+		float(Input.is_physical_key_pressed(keys[3])) - float(Input.is_physical_key_pressed(keys[2])),
+		float(Input.is_physical_key_pressed(keys[1])) - float(Input.is_physical_key_pressed(keys[0])),
+	)
+	var joy := Vector2(
+		Input.get_joy_axis(joy_device, JOY_AXIS_LEFT_X),
+		Input.get_joy_axis(joy_device, JOY_AXIS_LEFT_Y),
+	)
+	if joy.length() < DEADZONE:
+		joy = Vector2.ZERO
+	var attack := (Input.is_physical_key_pressed(keys[4])
+			or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_A))
+	var action2 := Input.is_physical_key_pressed(keys[5]) or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_B)
+	_apply_controls(kb, joy, attack, action2, delta)
+
+
+## Controle virtual: decide os mesmos 3 "botões" (direção, ataque, 2º botão)
+## que o humano apertaria, a partir de quem está onde — main thread, antes do
+## dispatch, como o chase() dos goblins. `others` são todas as unidades (os
+## goblins saem dali), `allies` os players. Classe muda só alvo/distância/guarda.
+## Chegar perto usa o A* do mapa (contorna platô); se afastar é em linha reta.
+## ponytail: sem coleta nem carne no chão; o Camponês bot só luta.
+func bot_think(others: Array[Player], allies: Array[Player], map: ArenaMap,
+		shot_range: float, delta: float) -> void:
+	var move := Vector2.ZERO
+	var attack := false
+	var guard := false
+	var face: Player = null  ## pra quem olhar quando parado
+	var threat := _nearest_foe(others)
+	var to_threat := threat.pos - pos if threat else Vector2.ZERO
+	var dist := to_threat.length()
+	var healer := _nearest_monk(allies)
+	if is_dead():
+		pass
+	elif threat and healer and hp < max_hp * BOT_FLEE_HP and dist < BOT_DANGER_DIST:
+		# Recua pro Curandeiro: a aura/cura dele é quem recupera. Sem ele não
+		# tem o que recuperar a vida, então recuar só virava um vaivém — luta.
+		move = -to_threat.normalized()
+		if pos.distance_to(healer.pos) > 1.0:
+			move = (move + (healer.pos - pos).normalized()).normalized()
+	elif is_monk:
+		face = _most_wounded(allies)
+		if face == null:
+			face = _nearest_ally(allies)
+		if face:
+			var to_friend := face.pos - pos
+			if to_friend.length() > attack_range * 0.8:
+				move = map.nav_dir(pos + FEET, face.pos + FEET)
+			attack = face.hp < face.max_hp and to_friend.length() < attack_range
+	elif threat:
+		face = threat
+		if is_archer:
+			if dist < BOT_KITE_DIST:
+				move = -to_threat.normalized()
+			elif dist > shot_range * 0.9:
+				move = map.nav_dir(pos + FEET, threat.pos + FEET)
+			else:
+				attack = true
+		else:
+			if dist > attack_range * 0.8:
+				move = map.nav_dir(pos + FEET, threat.pos + FEET)
+			else:
+				attack = true
+			guard = (guard_texture != null and threat.is_attacking() and not is_attacking()
+					and dist < threat.attack_range + BOT_GUARD_MARGIN)
+	_apply_controls(move, Vector2.ZERO, attack, guard, delta)
+	# Parado o input zera, então o lado é decidido aqui — igual ao chase().
+	if face and input == Vector2.ZERO and face != self:
+		facing_right = face.pos.x >= pos.x
+
+
+func _nearest_foe(others: Array[Player]) -> Player:
+	var best: Player = null
+	for u in others:
+		if u.is_enemy == is_enemy or u.is_dead():
+			continue
+		if best == null or pos.distance_squared_to(u.pos) < pos.distance_squared_to(best.pos):
+			best = u
+	return best
+
+
+func _nearest_ally(allies: Array[Player]) -> Player:
+	var best: Player = null
+	for a in allies:
+		if a == self or a.is_dead():
+			continue
+		if best == null or pos.distance_squared_to(a.pos) < pos.distance_squared_to(best.pos):
+			best = a
+	return best
+
+
+func _nearest_monk(allies: Array[Player]) -> Player:
+	var best: Player = null
+	for a in allies:
+		if a == self or a.is_dead() or not a.is_monk:
+			continue
+		if best == null or pos.distance_squared_to(a.pos) < pos.distance_squared_to(best.pos):
+			best = a
+	return best
+
+
+## Menor fração de vida entre os vivos feridos (pode ser o próprio Curandeiro).
+func _most_wounded(allies: Array[Player]) -> Player:
+	var best: Player = null
+	for a in allies:
+		if a.is_dead() or a.hp >= a.max_hp:
+			continue
+		if best == null or a.hp / a.max_hp < best.hp / best.max_hp:
+			best = a
+	return best
+
+
+## O que os botões fazem — igual pra humano (poll_input) e bot (bot_think).
+## `kb` e `joy` chegam separados porque a mira troca de alvo só pelo teclado.
+## `delta` só serve pra contar attack_hold_time (a skill de segurar o ataque).
+func _apply_controls(kb: Vector2, joy: Vector2, attack: bool, action2: bool,
+		delta: float) -> void:
 	# 2º botão: vira Guarda (segurar), Coleta (apertar) ou Mira (segurar,
 	# arqueiro) — cada um só reage ao que a classe atual suporta.
-	var action2 := Input.is_physical_key_pressed(keys[5]) or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_B)
 	var action2_started := action2 and not _action2_prev
 	_action2_prev = action2
 	harvest_triggered = (action2_started and axe_texture != null
@@ -240,17 +364,6 @@ func poll_input(delta: float) -> void:
 		_aim_up_prev = false
 		_aim_down_prev = false
 
-	var kb := Vector2(
-		float(Input.is_physical_key_pressed(keys[3])) - float(Input.is_physical_key_pressed(keys[2])),
-		float(Input.is_physical_key_pressed(keys[1])) - float(Input.is_physical_key_pressed(keys[0])),
-	)
-	var joy := Vector2(
-		Input.get_joy_axis(joy_device, JOY_AXIS_LEFT_X),
-		Input.get_joy_axis(joy_device, JOY_AXIS_LEFT_Y),
-	)
-	if joy.length() < DEADZONE:
-		joy = Vector2.ZERO
-
 	if is_aiming:
 		# Parado no lugar: cima/baixo troca de alvo em vez de andar (um passo
 		# por toque, não repete enquanto segura).
@@ -269,8 +382,7 @@ func poll_input(delta: float) -> void:
 	if is_charging:
 		input = Vector2.ZERO  ## carregando o golpe especial: parado, sem escapatória de graça
 
-	attack_pressed = (Input.is_physical_key_pressed(keys[4])
-			or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_A))
+	attack_pressed = attack
 	attack_hold_time = attack_hold_time + delta if attack_pressed else 0.0
 	stamina = minf(stamina + STAMINA_REGEN_RATE * delta, max_stamina)  ## regenera sempre, mesmo atacando
 

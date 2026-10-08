@@ -119,7 +119,7 @@ func update_stats(
 		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
-		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
+		"[color=%s][ESPAÇO] alternar modo   [B] bots   [H] menos info[/color]" % DIM,
 	])
 	queue_redraw()
 

@@ -32,7 +32,10 @@ controles.
   `blockers` (`Array[Rect2]` da base das árvores e construções, mais o
   barranco dos platôs — beiradas e parede, menos o vão da rampa), montado
   no `_ready()` e só lido depois — as threads leem sem lock, e
-  `Player._push_out()` empurra a unidade pra fora pelo lado mais perto
+  `Player._push_out()` empurra a unidade pra fora pelo lado mais perto. Dos
+  mesmos blockers sai `nav` (`AStarGrid2D`, células de `NAV_CELL`), que
+  `nav_dir()` usa pra levar os bots contornando o platô até a rampa — só a
+  main thread consulta
 - `scripts/world/unit_sprite.gd` — `UnitSprite`: um nó de desenho por unidade,
   irmão das árvores dentro do `Decor` y-sorted (é o que faz o player passar
   atrás da árvore). Lê `unit.pos` no `_process()` e desenha sombra, sprite,
@@ -71,6 +74,16 @@ limita golpe/flecha/cura — sem carga a ação não sai. `poll_input(delta)` de
 o INÍCIO do ataque/especial na main thread (não no `step()` da Thread), porque
 `main.gd` precisa saber "começou agora" no mesmo frame pra nascer a flecha.
 `[ESPAÇO]` alterna serial/threads.
+
+`[B]` liga/desliga o modo bot dos 3 players juntos (`Player.is_bot`, faixa
+mostra "BOT"). O bot é um controle virtual: `bot_think()` decide direção,
+ataque e 2º botão e passa pelo mesmo `_apply_controls()` do `poll_input()` —
+estamina, especial, guarda, flecha e chuva valem igual pros dois, sem
+vantagem. A classe muda só alvo e distância: corpo a corpo encosta no goblin
+mais perto e ergue a guarda quando ele está no meio de um golpe; a Arqueira
+mantém distância (`BOT_KITE_DIST`..`SHOT_RANGE`); o Curandeiro segue o aliado
+mais ferido. Abaixo de `BOT_FLEE_HP` o bot recua pro Curandeiro — sem ele não
+tem o que recuperar a vida, então segue lutando. O Camponês bot não coleta.
 
 Inimigos são goblins em ondas por level (ver `scripts/enemy_types.gd` e o
 `LevelPhase` de `main.gd`): banner anuncia, a onda nasce, e o level acaba
@@ -124,8 +137,9 @@ fora de `units` — não entram na comparação serial/threads, só na colisão,
 - Sem locks enquanto cada tarefa escrever só no próprio índice (`players[i]`).
   Se algum dado passar a ser compartilhado, aí sim `Mutex` (e vale mostrar na
   demo).
-- `Input` só na main thread: os players fazem `poll_input()` antes do dispatch;
-  a tarefa lê `input` e nunca chama `Input`.
+- `Input` e IA só na main thread: os players fazem `poll_input()` (ou
+  `bot_think()`, no modo bot) antes do dispatch; a tarefa lê `input` e nunca
+  chama `Input` nem olha outra unidade.
 - Nada de tocar na árvore de cena dentro da tarefa — os players são dados
   puros, desenhados depois no `_draw()`.
 - O HUD não mede nada: quem cronometra é `main.gd`, o HUD só formata.
