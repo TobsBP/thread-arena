@@ -470,7 +470,7 @@ func _process(delta: float) -> void:
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
 		if u.is_enemy:
-			u.chase(players, u.attack_range, u.attack_cooldown, delta)
+			u.chase(players, map, u.attack_range, u.attack_cooldown, delta)
 			# Mesmo instante que o arqueiro dispara a flecha: chase() acabou
 			# de decidir "começou a atacar agora" (attack_time == 0.0).
 			# not is_dead(): morrer bem nesse frame congela attack_time em

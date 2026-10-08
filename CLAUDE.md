@@ -34,8 +34,8 @@ controles.
   no `_ready()` e só lido depois — as threads leem sem lock, e
   `Player._push_out()` empurra a unidade pra fora pelo lado mais perto. Dos
   mesmos blockers sai `nav` (`AStarGrid2D`, células de `NAV_CELL`), que
-  `nav_dir()` usa pra levar os bots contornando o platô até a rampa — só a
-  main thread consulta
+  `nav_dir()` usa pra levar bots e goblins (`chase()`) contornando o platô
+  até a rampa — só a main thread consulta
 - `scripts/world/unit_sprite.gd` — `UnitSprite`: um nó de desenho por unidade,
   irmão das árvores dentro do `Decor` y-sorted (é o que faz o player passar
   atrás da árvore). Lê `unit.pos` no `_process()` e desenha sombra, sprite,

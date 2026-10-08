@@ -161,9 +161,9 @@ func _init(
 ## IA do inimigo: roda na main thread junto com o poll, só escreve `input` e
 ## `attack_pressed`. Persegue o alvo vivo mais próximo e, chegando no alcance,
 ## para e bate, respeitando o cooldown — a thread depois só aplica o movimento
-## e a animação.
-func chase(targets: Array[Player], attack_range: float, cooldown: float,
-		delta: float) -> void:
+## e a animação. Chega perto pelo A* do mapa, contornando o platô até a rampa.
+func chase(targets: Array[Player], map: ArenaMap, attack_range: float,
+		cooldown: float, delta: float) -> void:
 	attack_cd = maxf(attack_cd - delta, 0.0)
 	var best: Player = null
 	for t in targets:
@@ -187,7 +187,7 @@ func chase(targets: Array[Player], attack_range: float, cooldown: float,
 		attack_hit = false
 		if is_bomber:
 			fuse_time = 0.0  ## acendeu: main.gd._resolve_bomber_blasts() cuida do resto
-	input = Vector2.ZERO if in_range else to_target.normalized()
+	input = Vector2.ZERO if in_range else map.nav_dir(pos + FEET, best.pos + FEET)
 	# Parado batendo o input zera, então o lado é decidido aqui mesmo.
 	facing_right = to_target.x >= 0.0
 

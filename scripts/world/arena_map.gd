@@ -204,7 +204,7 @@ var _tree_tex: Array[Texture2D] = []  ## árvore original, pra restaurar ao cres
 var _tree_stump_tex: Array[Texture2D] = []
 var tree_regrow: Array[float] = []  ## <= 0 = árvore em pé; > 0 = segundos até voltar
 ## Grade A* da PLAY_AREA, com os blockers marcados como sólidos — montada no
-## _ready() e só consultada pela main thread (Player.bot_think), nunca na tarefa.
+## _ready() e só consultada pela main thread (bot_think/chase), nunca na tarefa.
 var nav := AStarGrid2D.new()
 
 @onready var water: TileMapLayer = $Water
@@ -291,8 +291,8 @@ func _build_nav() -> void:
 ## Direção do próximo passo de `from` até `to` (pontos dos pés), contornando
 ## os blockers. Sem caminho (mesma célula, fora da grade) devolve a reta — o
 ## _push_out() do step() resolve o resto.
-## ponytail: A* a cada chamada, sem cache — ~0,04 ms cada, 3 bots por frame;
-## cachear o caminho por bot se entrar muito mais unidade usando isto.
+## ponytail: A* a cada chamada, sem cache — ~0,1 ms por frame com 14 goblins
+## + 3 bots; cachear o caminho por unidade se o teto de inimigos subir muito.
 func nav_dir(from: Vector2, to: Vector2) -> Vector2:
 	var straight := (to - from).normalized()
 	var a := _free_cell(Vector2i(from / NAV_CELL))
