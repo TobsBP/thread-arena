@@ -184,6 +184,7 @@ const CLOUD_SPEED := 90.0  ## px/s no alpha máximo; as fracas andam mais devaga
 const CLOUD_WIDTH := 576.0
 
 const SWAY_FPS := 8.0  ## balanço de árvores e arbustos
+const NAV_CELL := 32  ## grade dos bots: meio tile, deixa 3 células livres no vão da rampa
 
 ## Layout fixo (seed constante) pra a demo abrir sempre igual.
 @export var layout_seed := 20260902
@@ -202,6 +203,9 @@ var _tree_raw_spots: Array[Vector2] = []  ## canto antes do offset do pé, pra r
 var _tree_tex: Array[Texture2D] = []  ## árvore original, pra restaurar ao crescer de novo
 var _tree_stump_tex: Array[Texture2D] = []
 var tree_regrow: Array[float] = []  ## <= 0 = árvore em pé; > 0 = segundos até voltar
+## Grade A* da PLAY_AREA, com os blockers marcados como sólidos — montada no
+## _ready() e só consultada pela main thread (bot_think/chase), nunca na tarefa.
+var nav := AStarGrid2D.new()
 
 @onready var water: TileMapLayer = $Water
 @onready var foam: TileMapLayer = $Foam
@@ -219,6 +223,7 @@ func _ready() -> void:
 	_build_ground(rng)
 	_build_decor(rng)
 	_build_clouds(rng)
+	_build_nav()
 
 
 ## Só as nuvens se mexem por conta própria e as árvores cortadas contam pra
@@ -261,6 +266,58 @@ func _build_clouds(rng: RandomNumberGenerator) -> void:
 		sprite.position = Vector2(rng.randf() * WORLD.x, rng.randf() * WORLD.y)
 		sprite.modulate = Color(1.0, 1.0, 1.0, rng.randf_range(0.10, 0.30))
 		clouds.add_child(sprite)
+
+
+## Célula sólida = o centro dela, como pé de unidade, cairia dentro de um
+## blocker — o mesmo teste do Player._push_out(). Toco de árvore segue sólido,
+## igual ao blocker, que não muda.
+func _build_nav() -> void:
+	nav.region = Rect2i(Vector2i(PLAY_AREA.position) / NAV_CELL, Vector2i(PLAY_AREA.size) / NAV_CELL)
+	nav.cell_size = Vector2(NAV_CELL, NAV_CELL)
+	nav.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
+	nav.update()
+	var grown: Array[Rect2] = []
+	for r in blockers:
+		grown.append(r.grow(Player.BODY_RADIUS))
+	for x in range(nav.region.position.x, nav.region.end.x):
+		for y in range(nav.region.position.y, nav.region.end.y):
+			var center := (Vector2(x, y) + Vector2(0.5, 0.5)) * NAV_CELL
+			for r in grown:
+				if r.has_point(center):
+					nav.set_point_solid(Vector2i(x, y))
+					break
+
+
+## Direção do próximo passo de `from` até `to` (pontos dos pés), contornando
+## os blockers. Sem caminho (mesma célula, fora da grade) devolve a reta — o
+## _push_out() do step() resolve o resto.
+## ponytail: A* a cada chamada, sem cache — ~0,1 ms por frame com 14 goblins
+## + 3 bots; cachear o caminho por unidade se o teto de inimigos subir muito.
+func nav_dir(from: Vector2, to: Vector2) -> Vector2:
+	var straight := (to - from).normalized()
+	var a := _free_cell(Vector2i(from / NAV_CELL))
+	var b := _free_cell(Vector2i(to / NAV_CELL))
+	if a == b or not nav.is_in_boundsv(a) or not nav.is_in_boundsv(b):
+		return straight
+	var path := nav.get_id_path(a, b, true)
+	if path.size() < 3:
+		return straight
+	# Mira duas células à frente: corta o zigue-zague da grade sem pular quina.
+	var next := nav.get_point_position(path[2]) + nav.cell_size * 0.5
+	return (next - from).normalized()
+
+
+## Pé encostado na parede costuma cair numa célula sólida (a borda do blocker
+## alargado passa no meio dela): começa da vizinha livre, senão o A* não sai.
+func _free_cell(c: Vector2i) -> Vector2i:
+	if not nav.is_in_boundsv(c) or not nav.is_point_solid(c):
+		return c
+	for d in [Vector2i.LEFT, Vector2i.RIGHT, Vector2i.UP, Vector2i.DOWN,
+			Vector2i(-1, -1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(1, 1)]:
+		var n: Vector2i = c + d
+		if nav.is_in_boundsv(n) and not nav.is_point_solid(n):
+			return n
+	return c
 
 
 ## Nó de desenho de uma unidade, irmão das árvores: entra no Decor y-sorted,

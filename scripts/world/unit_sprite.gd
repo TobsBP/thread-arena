@@ -100,7 +100,7 @@ func _draw() -> void:
 	draw_string(
 		ThemeDB.fallback_font,
 		body + Vector2(-30, -75),
-		"ENEMY" if unit.is_enemy else "P%d" % (unit.joy_device + 1),
+		"ENEMY" if unit.is_enemy else ("BOT" if unit.is_bot else "P%d" % (unit.joy_device + 1)),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		60,
 		12,
