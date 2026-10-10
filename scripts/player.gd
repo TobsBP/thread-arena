@@ -92,6 +92,12 @@ var harvest_triggered := false  ## borda de subida do 2º botão nesse frame
 var wood := 0
 var gold := 0
 var _action2_prev := false  ## detecta a borda de subida do 2º botão (guarda/coleta)
+## Posicionando uma construção (main.gd): ataque confirma, 2º botão cancela.
+var build_mode := false
+var build_confirm := false  ## borda de subida do ataque neste frame
+var build_cancel := false  ## borda de subida do 2º botão neste frame
+var _build_attack_prev := false
+var _build_action2_prev := false
 var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
 var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
 var attack_cooldown := 1.2  ## inimigo: respiro entre golpes — varia por tipo (ver EnemyTypes)
@@ -238,7 +244,28 @@ func poll_input(delta: float) -> void:
 	var attack := (Input.is_physical_key_pressed(keys[4])
 			or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_A))
 	var action2 := Input.is_physical_key_pressed(keys[5]) or Input.is_joy_button_pressed(joy_device, JOY_BUTTON_B)
+	if build_mode:
+		# Posicionando construção: os dois botões viram confirmar/cancelar
+		# (borda de subida) e nunca chegam ao golpe/coleta — o resto (andar)
+		# segue igual, que é o que move o fantasma.
+		build_confirm = attack and not _build_attack_prev
+		build_cancel = action2 and not _build_action2_prev
+		_build_attack_prev = attack
+		_build_action2_prev = action2
+		attack = false
+		action2 = false
 	_apply_controls(kb, joy, attack, action2, delta)
+
+
+## Entra/sai do modo posicionamento (main.gd). Os "anteriores" começam
+## apertados: a tecla que fechou o menu ainda pode estar no dedo, e sem isso
+## ela confirmaria a obra no frame seguinte.
+func set_build_mode(on: bool) -> void:
+	build_mode = on
+	build_confirm = false
+	build_cancel = false
+	_build_attack_prev = true
+	_build_action2_prev = true
 
 
 ## Controle virtual: decide os mesmos 3 "botões" (direção, ataque, 2º botão)

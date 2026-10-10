@@ -4,6 +4,8 @@
 [ext_resource type="PackedScene" path="res://scenes/hud.tscn" id="2"]
 [ext_resource type="PackedScene" path="res://scenes/world/arena_map.tscn" id="3"]
 [ext_resource type="Script" uid="uid://bp6b8uakjqnms" path="res://scripts/level_banner.gd" id="4"]
+[ext_resource type="Script" path="res://scripts/castle_menu.gd" id="5"]
+[ext_resource type="Script" path="res://scripts/side_panel.gd" id="6"]
 
 [node name="Main" type="Node2D" unique_id=452181618]
 script = ExtResource("1")
@@ -31,3 +33,24 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("4")
+
+[node name="SidePanel" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("6")
+
+[node name="CastleMenu" type="Control" parent="UI"]
+process_mode = 3
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("5")

@@ -23,7 +23,7 @@ controles.
   Tilemap Guide do pack) e a rampa nas peças de escada do tileset, único
   acesso ao topo — e as manchas de grama escura, todas
   montadas do mesmo tileset sem terrain set, mais Sprite2D/AnimatedSprite2D
-  de construções, árvores, arbustos, pedras, tralha de acampamento e
+  do castelo principal, árvores, arbustos, pedras, tralha de acampamento e
   fogueiras), a camada `Clouds` que
   atravessa o mapa (única coisa que o `_process()` do mapa mexe), um
   `CanvasModulate` de fim de tarde com `PointLight2D` nas fogueiras, e as
@@ -31,7 +31,9 @@ controles.
   unidades andam). Monta tudo no `_ready()`, não sabe de threads. Expõe
   `blockers` (`Array[Rect2]` da base das árvores e construções, mais o
   barranco dos platôs — beiradas e parede, menos o vão da rampa), montado
-  no `_ready()` e só lido depois — as threads leem sem lock, e
+  no `_ready()` e depois só crescendo via `add_blocker()` (construção do
+  jogador), na main thread e fora da janela `t.start()`/`wait_to_finish()`
+  — as threads leem sem lock, e
   `Player._push_out()` empurra a unidade pra fora pelo lado mais perto. Dos
   mesmos blockers sai `nav` (`AStarGrid2D`, células de `NAV_CELL`), que
   `nav_dir()` usa pra levar bots e goblins (`chase()`) contornando o platô
@@ -56,6 +58,31 @@ controles.
 - `scripts/level_banner.gd` — `LevelBanner`: "LEVEL N — TIPO" no meio da
   tela, aparece e some sozinho; só desenha o que `main.gd` manda pronto
   (texto + alfa) — não cronometra nada, mesma regra do HUD
+- `scripts/kingdom.gd` — `Kingdom` (RefCounted, só main thread): banco de
+  madeira/ouro (`INFINITE_BANK` liga o banco infinito; a trava de level
+  segue valendo), nós comprados da árvore, `max_workers`, `job_cap`/`assigned`
+  por profissão (`Job`) e `built` (construções prontas). Quem diz se compra,
+  constrói ou aloca é ele (`buy_block`/`build_block`/`assign`)
+- `scripts/upgrade_tree.gd` — `UpgradeTree`: catálogo da árvore de evolução
+  (ramos em colunas, `requires` em sequência, `effect` interpretado por
+  `Kingdom.buy`), mesmo espírito do `EnemyTypes`
+- `scripts/castle_menu.gd` — `CastleMenu` (nó em `UI` do `main.tscn`,
+  `process_mode` ALWAYS): menu do castelo principal com as abas Evolução,
+  Trabalhadores e Construir, por teclado ou mouse (hover move o cursor,
+  clique confirma; `_hits` guarda as áreas do último `_draw()`). Abre/fecha
+  pausando o jogo; só desenha e chama o
+  `Kingdom`. Construir só escolhe o tipo (sinal `build_chosen`), e quem cobra e
+  posiciona é `main.gd`
+- `scripts/side_panel.gd` — `SidePanel` (nó em `UI`): no canto superior
+  direito o status (level, SEM MOBS, banco, trabalhadores); no inferior
+  direito, sem fundo, os comandos de todos os players numa lista só (uma
+  linha por ação, teclas lado a lado com um risco da cor de cada player) e as
+  dicas do momento (perto do castelo, árvore, carregando, posicionando obra;
+  dica repetida entre players vira uma linha). As dicas vêm prontas de
+  `main.gd _player_hints()`; o painel só formata e segue o `[H]` do HUD
+- `scripts/build_site.gd` — `BuildSite`: construção erguida pelo jogador
+  (Casa/Castelo/Torre/Quartel, catálogo em `KINDS`) — obra com `progress`, vira
+  prédio em `main.gd _update_build_sites()`, que aplica o efeito
 - `scripts/dynamite.gd` — `Dynamite`: projétil do Goblin da Dinamite, mesmo
   esquema da `Arrow` (nasce, voa em arco, pousa) — só que pousada tem um
   pavio (`FUSE_TIME`) antes de estourar em área; `should_blast()` dispara o
@@ -89,7 +116,9 @@ Inimigos são goblins em ondas por level (ver `scripts/enemy_types.gd` e o
 `LevelPhase` de `main.gd`): banner anuncia, a onda nasce, e o level acaba
 quando mata todo mundo OU quando o tempo estoura — o que vier primeiro. Não
 acumula: ao trocar de level, quem sobrou é removido antes da próxima onda.
-`[G]` invoca um inimigo avulso de tipo aleatório (não conta pro "matou tudo"),
+`[M]` liga o modo sem mobs (`no_mobs`): limpa os goblins, a onda não nasce,
+`[G]` não invoca, e a fase só fecha pelo tempo — o level segue subindo pra a
+árvore de evolução destravar. `[G]` invoca um inimigo avulso de tipo aleatório (não conta pro "matou tudo"),
 até um teto de segurança — mais inimigo é mais uma Thread, e é isso que a
 tecla existe pra mostrar. Todo inimigo (`is_enemy`) que morre é removido de
 vez (`main.gd _remove_enemy`), diferente do player, que sempre respawna.
@@ -117,10 +146,23 @@ Barril) não bate nenhuma vez — chega perto, acende um pavio próprio
 (`main.gd _resolve_bomber_blasts()`). Os dois ficam de fora do golpe
 corpo-a-corpo genérico em `_resolve_attacks()`.
 
+Castelos: o mapa começa só com o castelo principal (`ArenaMap.MAIN_CASTLE`,
+azul, no meio da ilha) — nenhuma outra construção fixa; o resto o jogador
+ergue (o Castelo construído é amarelo, pra não confundir com o principal).
+A coleta do Camponês só é entregue em `castle_spots` e vai
+pro banco do `Kingdom`. Perto do castelo principal (`main_castle_spot`), `[T]`
+abre o `CastleMenu`. Ao escolher uma construção, quem abriu o menu entra em
+`Player.build_mode`: o ataque/2º botão viram `build_confirm`/`build_cancel` e
+o fantasma segue à frente dele. A obra nasce em `_update_placement()`
+(`ArenaMap.place_building`, que já soma o blocker e marca o `nav`) e termina em
+`_update_build_sites()`, as duas **antes do dispatch**. A Torre pronta atira
+`Arrow` comum (o dano sai do `_resolve_arrow_hits()`). Trabalhadores por
+profissão ainda são só número no `Kingdom`, não nascem no mapa.
+
 Ovelhas (`sheep`) e pawns lenhadores (`workers`) são cenário vivo: as ovelhas
-andam a esmo (`Player.wander()`) e os pawns vão do toco à construção com
-madeira nas costas (`Player.haul()`, com os pontos vindos de
-`ArenaMap.tree_spots`/`building_spots`). Os dois rodam na main thread e ficam
+andam a esmo (`Player.wander()`) e os pawns vão do toco ao castelo principal
+com madeira nas costas (`Player.haul()`, com os pontos vindos de
+`ArenaMap.tree_spots`/`main_castle_spot`). Os dois rodam na main thread e ficam
 fora de `units` — não entram na comparação serial/threads, só na colisão, via
 `bodies` (= `units` + `sheep` + `workers`).
 

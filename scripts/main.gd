@@ -59,6 +59,17 @@ const HARVEST_REACH := 70.0
 ## levar (carregando, perto de qual construção) — ver _draw_harvest_prompt().
 const WOOD_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_02.png")
 const GOLD_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_03.png")
+## Engrenagem sobre o castelo principal: "[T] evolução" (ver _draw_castle_prompt).
+const CASTLE_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_10.png")
+## Castelo principal: chegar perto + [T] abre o CastleMenu, que pausa o jogo.
+const CASTLE_REACH := 140.0
+## Construção (escolhida no CastleMenu): o fantasma fica à frente de quem
+## abriu o menu, encaixado na grade de tiles; ataque confirma, 2º botão cancela.
+const BUILD_AHEAD := 60.0  ## folga entre o pé do player e a base da obra
+const TOWER_RANGE := 420.0
+const TOWER_COOLDOWN := 1.4  ## segundos entre flechas da torre
+const BARRACKS_HP := 15.0  ## vida máxima a mais por Quartel pronto...
+const BARRACKS_MAX := 3  ## ...até este tanto de quartéis
 ## "black": 4ª skin da tela de seleção — Lanceiro (golpe de lança + guarda
 ## com a postura de defesa). Quadro 320×320, bem maior que os outros (192).
 const BLACK_LANCER_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Black Units/Lancer/Lancer_Idle.png")
@@ -130,6 +141,9 @@ const MAX_LIVE_ENEMIES := 14  ## teto do [G]: onda + avulsos juntos
 const MIN_ENEMY_SPAWN_DIST := 260.0  ## nasce longe dos players, não em cima
 
 @export var use_threads := false
+## [M]: sem goblins — onda não nasce e [G] não invoca; o level segue subindo
+## só pelo tempo (LEVEL_TIME_LIMIT), pra a árvore de evolução ir destravando.
+var no_mobs := false
 
 var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes)
 var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
@@ -159,10 +173,23 @@ var _wave_enemies: Array[Player] = []  ## só os da onda atual — decide "matou
 ## referência nenhuma) — é o que permite remover um goblin de vez.
 var _enemy_sprites: Dictionary[Player, UnitSprite] = {}
 
+## Economia: banco, árvore e trabalhadores (dado puro, só main thread).
+var kingdom := Kingdom.new()
+## Construções erguidas pelo jogador (obra ou prontas). Nascem e terminam
+## antes do dispatch: o blocker novo entra fora da janela das Threads.
+var build_sites: Array[BuildSite] = []
+var placing_kind: StringName = &""  ## "" = ninguém posicionando
+var placer: Player = null  ## quem posiciona (quem abriu o menu)
+var _place_dir := Vector2.RIGHT  ## último rumo do placer: o fantasma fica desse lado
+var _menu_opener: Player = null
+var _placer_was_bot := false  ## bot posicionando vira humano até confirmar/cancelar
+
 @onready var map: ArenaMap = $ArenaMap
 @onready var hud: Control = $UI/HUD
 @onready var banner: LevelBanner = $UI/LevelBanner
 @onready var cam: Camera2D = $Camera
+@onready var castle_menu: CastleMenu = $UI/CastleMenu
+@onready var side: SidePanel = $UI/SidePanel
 
 
 func _ready() -> void:
@@ -187,6 +214,7 @@ func _ready() -> void:
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
 	cam.position = WORLD * 0.5
+	castle_menu.build_chosen.connect(_on_build_chosen)
 	# Sem inimigo fixo mais: o level 1 nasce depois do banner (ver _update_level).
 	_start_banner()
 
@@ -307,7 +335,8 @@ func _update_level(delta: float) -> void:
 				_start_combat()
 		LevelPhase.COMBAT:
 			level_timer += delta
-			if _wave_enemies.is_empty() or level_timer >= LEVEL_TIME_LIMIT:
+			# Sem mobs, a onda vazia não conta como "matou tudo": só o tempo fecha a fase.
+			if (_wave_enemies.is_empty() and not no_mobs) or level_timer >= LEVEL_TIME_LIMIT:
 				_end_combat()
 		LevelPhase.INTERMISSION:
 			if phase_timer >= INTERMISSION_DURATION:
@@ -327,6 +356,8 @@ func _update_banner() -> void:
 
 
 func _level_title(lvl: int) -> String:
+	if no_mobs:
+		return "LEVEL %d — SEM MOBS" % lvl
 	return "LEVEL %d — %s" % [lvl, EnemyTypes.kind(lvl - 1).title]
 
 
@@ -339,7 +370,8 @@ func _start_combat() -> void:
 	level_phase = LevelPhase.COMBAT
 	phase_timer = 0.0
 	level_timer = 0.0
-	_spawn_wave(level)
+	if not no_mobs:
+		_spawn_wave(level)
 
 
 func _end_combat() -> void:
@@ -362,7 +394,7 @@ func _spawn_wave(lvl: int) -> void:
 ## não entra em _wave_enemies, então não conta pro "matou tudo" nem trava o
 ## level; só engorda a demo (mais uma Thread na tela) até o teto de segurança.
 func _summon_random_enemy() -> void:
-	if level_phase != LevelPhase.COMBAT:
+	if level_phase != LevelPhase.COMBAT or no_mobs:
 		return
 	if units.size() - players.size() >= MAX_LIVE_ENEMIES:
 		return
@@ -445,14 +477,14 @@ func _spawn_sheep() -> void:
 		sheep.append(s)
 
 
-## Cada pawn puxa madeira de uma árvore pra uma construção — os pontos vêm do
-## mapa, que é quem sabe onde as coisas caíram.
+## Cada pawn puxa madeira de uma árvore pro castelo principal — os pontos vêm
+## do mapa, que é quem sabe onde as coisas caíram.
 func _spawn_workers() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 4242
 	for i in PAWN_COUNT:
 		var blue := i % 2 == 0
-		var home: Vector2 = map.building_spots[i % map.building_spots.size()]
+		var home: Vector2 = map.main_castle_spot
 		var w := Player.new(home, Color.WHITE, [0, 0, 0, 0, 0, 0], -1,
 				PAWN_IDLE if blue else PAWN_IDLE_Y,
 				PAWN_RUN if blue else PAWN_RUN_Y,
@@ -503,6 +535,10 @@ func _process(delta: float) -> void:
 				_fire_arrow_rain(u)
 			if u.harvest_triggered:
 				_try_harvest(u)
+
+	# Antes do dispatch: obra nova mexe em blockers/nav, que as Threads leem.
+	_update_placement()
+	_update_build_sites(delta)
 
 	for a in arrows:
 		a.step(delta)
@@ -557,7 +593,8 @@ func _process(delta: float) -> void:
 	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera(delta)
-	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level)
+	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level, no_mobs)
+	side.update_panel(players, players.map(_player_hints), level, no_mobs, kingdom)
 	queue_redraw()  ## só as flechas usam _draw() agora (ver comentário lá)
 
 
@@ -950,6 +987,11 @@ func _draw() -> void:
 		_draw_harvest_prompt(p)
 		if p.is_archer:
 			_draw_aim_pointer(p)
+	for site in build_sites:
+		if not site.done:
+			_draw_build_progress(site)
+	_draw_castle_prompt()
+	_draw_ghost()
 	for n in damage_numbers:
 		_draw_damage_number(n)
 
@@ -1017,7 +1059,7 @@ func _draw_harvest_prompt(p: Player) -> void:
 	if not p.axe_texture or p.is_dead():
 		return
 	if p.carrying:
-		var target: Variant = _nearest_point(map.building_spots, p.pos)
+		var target: Variant = _nearest_point(map.castle_spots, p.pos)
 		if target != null:
 			_draw_prompt(target, GOLD_ICON if p.harvest_kind == "gold" else WOOD_ICON)
 		return
@@ -1044,16 +1086,16 @@ func _nearest_point(points: Array[Vector2], from: Vector2) -> Variant:
 	return best_pt
 
 
-## Ícone do pack + "U" numa bolha escura — não tem sprite de tecla no pacote,
-## então a bolha é desenhada na mão, do mesmo jeito que o resto do HUD.
-func _draw_prompt(pos: Vector2, icon: Texture2D) -> void:
+## Ícone do pack + a tecla numa bolha escura — não tem sprite de tecla no
+## pacote, então a bolha é desenhada na mão, do mesmo jeito que o resto do HUD.
+func _draw_prompt(pos: Vector2, icon: Texture2D, key := "U") -> void:
 	var top := pos + Vector2(0, -76)
 	draw_texture_rect(icon, Rect2(top + Vector2(-16, -16), Vector2(32, 32)), false)
 	var badge_pos := top + Vector2(14, -4)
 	draw_circle(badge_pos, 11.0, Color(0.05, 0.06, 0.08, 0.9))
 	draw_arc(badge_pos, 11.0, 0, TAU, 24, Color(1, 1, 1, 0.6), 1.5)
 	draw_string(
-		ThemeDB.fallback_font, badge_pos + Vector2(-4, 5), "U",
+		ThemeDB.fallback_font, badge_pos + Vector2(-4, 5), key,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 14, Color(1, 1, 1, 0.95),
 	)
 
@@ -1080,14 +1122,24 @@ func _update_camera(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event.is_action_pressed("ui_accept"):
+	if placer != null and event.is_action_pressed("ui_cancel"):
+		_end_placement()  ## ESC posicionando: só desiste da obra, não sai da partida
+		get_viewport().set_input_as_handled()
+	elif event.is_action_pressed("ui_accept"):
 		use_threads = not use_threads
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_T:
+		_open_castle_menu()
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_H:
 		hud.cycle_detail()
+		side.detail = hud.detail
+		side.queue_redraw()
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G:
 		_summon_random_enemy()
+	elif event is InputEventKey and event.pressed and not event.echo 			and event.physical_keycode == KEY_M:
+		_toggle_no_mobs()
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_B:
 		# Os três juntos: liga/desliga o bot no lugar do teclado/controle.
@@ -1101,12 +1153,14 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## Coleta do P3 (botão de coleta): sem carga, procura árvore ou ouro perto
 ## pra começar a golpear (Player._step_harvest cuida da animação e vira
-## "carrying" sozinho); carregando, procura uma construção perto pra entregar
-## (aqui, na hora, sem animação — main thread, mexe direto no contador do p).
+## "carrying" sozinho); carregando, procura um castelo perto pra entregar
+## (aqui, na hora, sem animação — main thread). Vai pro banco do reino; o
+## contador do p continua só pro UnitSprite mostrar quanto ele já entregou.
 func _try_harvest(p: Player) -> void:
 	if p.carrying:
-		for b in map.building_spots:
+		for b in map.castle_spots:
 			if p.pos.distance_to(b) < HARVEST_REACH:
+				kingdom.deposit(p.harvest_kind)
 				if p.harvest_kind == "wood":
 					p.wood += 1
 				else:
@@ -1128,3 +1182,230 @@ func _try_harvest(p: Player) -> void:
 			p.harvest_kind = "gold"
 			p.harvest_time = 0.0
 			return
+
+
+## [M]. Fora do _process (input), então nenhuma Thread está rodando: pode
+## tirar/pôr goblin em units direto, igual à troca de fase.
+func _toggle_no_mobs() -> void:
+	no_mobs = not no_mobs
+	if no_mobs:
+		_clear_enemies()
+	elif level_phase == LevelPhase.COMBAT:
+		_spawn_wave(level)  ## voltou no meio da fase: a onda dela nasce agora
+
+
+## O que esse player pode fazer agora, pro painel da direita: [tecla, texto].
+## Mesma conta do _draw_harvest_prompt/_player_at_castle — quem sabe onde
+## fica castelo e árvore é o main, o SidePanel só formata.
+func _player_hints(p: Player) -> Array:
+	var atk := SidePanel.key_name(p.keys[4])
+	var act2 := SidePanel.key_name(p.keys[5])
+	if p.is_dead():
+		return [["", "caído — renasce já já"]]
+	if p == placer:
+		return [[atk, "confirmar obra"], [act2, "cancelar obra"]]
+	var out: Array = []
+	if p.is_bot:
+		out.append(["B", "bot jogando — devolve o controle"])
+	if p.pos.distance_to(map.main_castle_spot) < CASTLE_REACH:
+		out.append(["T", "abrir o castelo (evolução)"])
+	if p.axe_texture:
+		if p.carrying:
+			var at_castle := false
+			for c in map.castle_spots:
+				at_castle = at_castle or p.pos.distance_to(c) < HARVEST_REACH
+			out.append([act2, "entregar no castelo"] if at_castle else ["", "leve a carga até um castelo"])
+		elif not p.is_harvesting():
+			for i in map.tree_spots.size():
+				if map.tree_regrow[i] <= 0.0 and p.pos.distance_to(map.tree_spots[i]) < HARVEST_REACH:
+					out.append([act2, "cortar árvore"])
+					break
+			for g in map.gold_spots:
+				if p.pos.distance_to(g) < HARVEST_REACH:
+					out.append([act2, "minerar ouro"])
+					break
+	if p.stamina < Player.ATTACK_STAMINA_COST:
+		out.append(["", "sem estamina — espere recarregar"])
+	return out
+
+
+## --- Castelo e construção ---------------------------------------------
+## Tudo main thread. Obra nasce (_update_placement) e termina
+## (_update_build_sites) antes do dispatch das tarefas — blockers/nav só
+## mudam fora da janela t.start()/wait_to_finish(), igual ao spawn de goblin.
+
+## Qualquer um dos players vivos (bot ou não) mais perto da porta do castelo
+## principal, dentro de CASTLE_REACH — null se ninguém estiver lá.
+func _player_at_castle() -> Player:
+	var best: Player = null
+	var best_d := CASTLE_REACH
+	for p in players:
+		if p.is_dead():
+			continue
+		var d := p.pos.distance_to(map.main_castle_spot)
+		if d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
+func _open_castle_menu() -> void:
+	var p := _player_at_castle()
+	if p == null:
+		return
+	_end_placement()
+	_menu_opener = p
+	castle_menu.open(kingdom, level)
+	get_viewport().set_input_as_handled()
+
+
+## Menu fechou com uma construção escolhida: quem abriu passa a posicionar.
+func _on_build_chosen(kind: StringName) -> void:
+	if _menu_opener == null or _menu_opener.is_dead():
+		return
+	placing_kind = kind
+	placer = _menu_opener
+	# Bot não lê o controle: quem posiciona anda com o teclado/controle dele
+	# até confirmar ou cancelar, e aí o bot volta.
+	_placer_was_bot = placer.is_bot
+	placer.is_bot = false
+	placer.set_build_mode(true)
+	_place_dir = Vector2.RIGHT if placer.facing_right else Vector2.LEFT
+
+
+func _end_placement() -> void:
+	if placer != null:
+		placer.set_build_mode(false)
+		if _placer_was_bot:
+			placer.is_bot = true
+	_placer_was_bot = false
+	placer = null
+	placing_kind = &""
+
+
+## Lê o confirmar/cancelar que o poll_input() do placer já decidiu neste
+## frame. Confirmar num lugar ruim não faz nada (o fantasma vermelho avisa).
+func _update_placement() -> void:
+	if placer == null:
+		return
+	if placer.is_bot or placer.is_dead() or placer.build_cancel:
+		_end_placement()
+		return
+	if placer.input.length() > 0.05:
+		_place_dir = placer.input.normalized()
+	if not placer.build_confirm:
+		return
+	var pos := _ghost_pos()
+	if not _can_place(pos):
+		return
+	if not kingdom.build_block(placing_kind).is_empty():
+		_end_placement()  ## o banco mudou desde a escolha no menu
+		return
+	kingdom.pay_build(placing_kind)
+	var node := map.place_building(placing_kind, pos)
+	build_sites.append(BuildSite.new(placing_kind, pos, _build_size(placing_kind), node))
+	_end_placement()
+
+
+## Canto de cima do quadro da obra: a base fica centrada a BUILD_AHEAD do pé
+## do placer, pro lado que ele anda/olha, encaixada na grade de tiles.
+func _ghost_pos() -> Vector2:
+	var size := _build_size(placing_kind)
+	var reach := absf(_place_dir.x) * size.x * 0.35 + absf(_place_dir.y) * size.y * 0.225
+	var base_center := placer.pos + Player.FEET + _place_dir * (reach + BUILD_AHEAD)
+	var pos := base_center - Vector2(size.x * 0.5, size.y * 0.725)
+	return (pos / ArenaMap.TILE).round() * ArenaMap.TILE
+
+
+## Mapa livre (ArenaMap.can_build) e ninguém em pé na base — senão a
+## unidade nasceria presa dentro do blocker.
+func _can_place(pos: Vector2) -> bool:
+	var base := ArenaMap.base_rect(pos, _build_size(placing_kind))
+	if not map.can_build(base):
+		return false
+	var grown := base.grow(Player.BODY_RADIUS)
+	for b in bodies:
+		if not b.is_dead() and grown.has_point(b.pos + Player.FEET):
+			return false
+	return true
+
+
+func _build_size(kind: StringName) -> Vector2:
+	return (ArenaMap.BUILD_TEX[kind][0] as Texture2D).get_size()
+
+
+## Obra avança; no frame em que termina vira prédio e aplica o efeito. Torre
+## pronta atira sozinha — a flecha é a mesma Arrow do arqueiro, então o dano
+## sai do _resolve_arrow_hits() de sempre.
+func _update_build_sites(delta: float) -> void:
+	for site in build_sites:
+		if not site.done:
+			site.progress += delta
+			if site.is_finished():
+				site.done = true
+				map.finish_building(site.node, site.kind)
+				_on_building_done(site)
+			continue
+		if site.kind != &"tower":
+			continue
+		site.cooldown -= delta
+		if site.cooldown > 0.0:
+			continue
+		var target := _nearest_enemy(site.top(), TOWER_RANGE)
+		if target != null:
+			arrows.append(Arrow.new(site.top(), target.pos, Arrow.Mode.SHOT))
+			site.cooldown = TOWER_COOLDOWN
+
+
+func _on_building_done(site: BuildSite) -> void:
+	kingdom.on_built(site.kind)
+	match site.kind:
+		&"castle":
+			map.castle_spots.append(site.door())
+		&"barracks":
+			if kingdom.built[&"barracks"] <= BARRACKS_MAX:
+				for p in players:
+					p.max_hp += BARRACKS_HP
+					if not p.is_dead():
+						p.hp += BARRACKS_HP
+
+
+func _nearest_enemy(from: Vector2, reach: float) -> Player:
+	var best: Player = null
+	var best_d := reach * reach
+	for u in units:
+		if not u.is_enemy or u.is_dead():
+			continue
+		var d := from.distance_squared_to(u.pos)
+		if d < best_d:
+			best_d = d
+			best = u
+	return best
+
+
+## Fantasma da construção: a textura pronta translúcida, verde se cabe e
+## vermelha se não, com a base que vai bloquear contornada.
+func _draw_ghost() -> void:
+	if placer == null:
+		return
+	var pos := _ghost_pos()
+	var ok := _can_place(pos)
+	var tint := Color(0.5, 1.0, 0.5, 0.6) if ok else Color(1.0, 0.4, 0.4, 0.6)
+	var tex: Texture2D = ArenaMap.BUILD_TEX[placing_kind][0]
+	draw_texture(tex, pos, tint)
+	draw_rect(ArenaMap.base_rect(pos, tex.get_size()), Color(tint, 0.9), false, 2.0)
+
+
+## Barra de obra em cima do prédio: a mesma barrinha da vida das unidades.
+func _draw_build_progress(site: BuildSite) -> void:
+	var bar := Rect2(site.pos + Vector2(site.size.x * 0.5 - 48, site.size.y * 0.3), Vector2(96, 19))
+	PackUI.hslice(self, UnitSprite.UI_BAR, bar, UnitSprite.BAR_SRC, UnitSprite.BAR_CAP)
+	draw_texture_rect_region(UnitSprite.UI_BAR_FILL,
+			Rect2(bar.position + Vector2(7, 8), Vector2((bar.size.x - 14) * site.ratio(), 3)),
+			Rect2(0, 30, 64, 3), Color(1.0, 0.82, 0.15))
+
+
+## "[T]" sobre o castelo principal quando tem player perto pra abrir o menu.
+func _draw_castle_prompt() -> void:
+	if placer == null and _player_at_castle() != null:
+		_draw_prompt(map.main_castle_spot + Vector2(0, -40), CASTLE_ICON, "T")
