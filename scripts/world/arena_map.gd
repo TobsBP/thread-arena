@@ -87,13 +87,33 @@ const STUMPS := [
 ]
 const REGROW_TIME := 25.0
 
-## Construções fixas: [textura, posição em fração da ilha].
-const BUILDINGS := [
-	[preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Castle.png"), Vector2(0.04, 0.04)],
-	[preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Red Buildings/Tower.png"), Vector2(0.46, 0.02)],
-	[preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Yellow Buildings/House1.png"), Vector2(0.62, 0.08)],
-	[preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Barracks.png"), Vector2(0.80, 0.03)],
-]
+## Castelo principal: a única construção que já começa no mapa (abre a
+## árvore de evolução, ver CastleMenu) — o resto o jogador ergue. No meio da
+## ilha, abaixo do platô central e logo abaixo da linha onde os players
+## nascem. É o único azul: o Castelo que o jogador constrói é amarelo.
+const MAIN_CASTLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Castle.png")
+const MAIN_CASTLE_AT := Vector2(0.445, 0.58)  ## canto de cima, em fração da ilha
+## Folga em volta do castelo onde árvore/pedra/enfeite não nascem. Os pontos
+## sorteados são o canto de cima do sprite, por isso a folga é maior em
+## cima/à esquerda (o tamanho de uma árvore); embaixo fica a pracinha da
+## porta, onde se entrega a coleta.
+const CASTLE_CLEAR_TOP_LEFT := Vector2(200, 260)
+const CASTLE_CLEAR := 24.0
+const CASTLE_PLAZA := 160.0
+
+## Construções que o jogador ergue (BuildSite): [pronta, obra]. As obras do
+## Update 010 têm o mesmo tamanho de quadro das prontas do Free Pack; o
+## Quartel não tem obra no pack, então usa a pronta apagada (BUILD_GHOST_TINT).
+const BUILD_TEX := {
+	&"house": [preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/House1.png"),
+		preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Factions/Knights/Buildings/House/House_Construction.png")],
+	&"castle": [preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Yellow Buildings/Castle.png"),
+		preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Factions/Knights/Buildings/Castle/Castle_Construction.png")],
+	&"tower": [preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Tower.png"),
+		preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Factions/Knights/Buildings/Tower/Tower_Construction.png")],
+	&"barracks": [preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Barracks.png"), null],
+}
+const BUILD_GHOST_TINT := Color(0.6, 0.6, 0.6, 0.55)
 
 const BUSHES := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Decorations/Bushes/Bushe1.png"),
@@ -190,10 +210,16 @@ const NAV_CELL := 32  ## grade dos bots: meio tile, deixa 3 células livres no v
 @export var layout_seed := 20260902
 
 ## Retângulos que barram as unidades (base das árvores e das construções).
-## Preenchido no _ready() e só lido depois — as threads leem sem lock.
+## Montado no _ready() e lido sem lock pelas threads. Só cresce depois disso
+## pelo add_blocker() (construção do jogador), na main thread e fora da
+## janela t.start()/wait_to_finish() — mesma regra do spawn de goblin.
 var blockers: Array[Rect2] = []
-## Pontos de interesse pros pawns: porta das construções e pé das árvores.
-var building_spots: Array[Vector2] = []
+## Porta dos castelos (o principal + os erguidos pelo jogador): onde a
+## coleta é entregue. main_castle_spot é a porta do principal, que também é
+## a base dos pawns de cenário. tree_spots é o pé das árvores.
+var castle_spots: Array[Vector2] = []
+var main_castle_spot := Vector2.ZERO
+var _castle_rect := Rect2()  ## quadro inteiro do principal, pra cenário não nascer em cima
 var tree_spots: Array[Vector2] = []
 var gold_spots: Array[Vector2] = []
 ## Paralelos a tree_spots, pra cada árvore poder virar toco e voltar a
@@ -276,16 +302,23 @@ func _build_nav() -> void:
 	nav.cell_size = Vector2(NAV_CELL, NAV_CELL)
 	nav.diagonal_mode = AStarGrid2D.DIAGONAL_MODE_ONLY_IF_NO_OBSTACLES
 	nav.update()
-	var grown: Array[Rect2] = []
 	for r in blockers:
-		grown.append(r.grow(Player.BODY_RADIUS))
-	for x in range(nav.region.position.x, nav.region.end.x):
-		for y in range(nav.region.position.y, nav.region.end.y):
-			var center := (Vector2(x, y) + Vector2(0.5, 0.5)) * NAV_CELL
-			for r in grown:
-				if r.has_point(center):
-					nav.set_point_solid(Vector2i(x, y))
-					break
+		_mark_solid(r)
+
+
+## Células da grade cobertas pelo blocker (alargado do raio do corpo) viram
+## sólidas — usado na montagem e quando o jogador ergue uma construção.
+func _mark_solid(r: Rect2) -> void:
+	var grown := r.grow(Player.BODY_RADIUS)
+	var c0 := Vector2i(grown.position / NAV_CELL)
+	var c1 := Vector2i(grown.end / NAV_CELL)
+	for x in range(c0.x, c1.x + 1):
+		for y in range(c0.y, c1.y + 1):
+			var cell := Vector2i(x, y)
+			if not nav.is_in_boundsv(cell):
+				continue
+			if grown.has_point((Vector2(cell) + Vector2(0.5, 0.5)) * NAV_CELL):
+				nav.set_point_solid(cell)
 
 
 ## Direção do próximo passo de `from` até `to` (pontos dos pés), contornando
@@ -324,6 +357,66 @@ func _free_cell(c: Vector2i) -> Vector2i:
 ## então unidade e cenário se ordenam pela linha dos pés.
 func add_unit(sprite: UnitSprite) -> void:
 	decor.add_child(sprite)
+
+
+## --- Construção pelo jogador -------------------------------------------
+## Tudo main thread, chamado por main.gd antes do dispatch das tarefas.
+
+## Base que bloqueia: a metade de baixo do quadro, sem a beirada do telhado —
+## a mesma conta das construções fixas.
+static func base_rect(pos: Vector2, size: Vector2) -> Rect2:
+	return Rect2(pos + Vector2(size.x * 0.15, size.y * 0.5),
+			Vector2(size.x * 0.7, size.y * 0.45))
+
+
+## Cabe ali: dentro da área andável, sem encostar em blocker nenhum (árvore,
+## prédio, obra, barranco) e fora do platô (o topo é andável, mas construir
+## lá em cima fecharia a rampa). Unidade no caminho é main.gd quem confere.
+func can_build(base: Rect2) -> bool:
+	if not PLAY_AREA.encloses(base):
+		return false
+	var grown := base.grow(Player.BODY_RADIUS)
+	for r in blockers:
+		if grown.intersects(r):
+			return false
+	for r in _plateau_rects():
+		if grown.intersects(r):
+			return false
+	return true
+
+
+## Nasce a obra: nó em Decor (y-sorted como o resto) com a textura de obra e
+## o blocker já valendo — ninguém atravessa nem o andaime.
+func place_building(kind: StringName, pos: Vector2) -> Sprite2D:
+	var tex: Array = BUILD_TEX[kind]
+	var done: Texture2D = tex[0]
+	var node := _add_decor(tex[1] if tex[1] else done, pos, 1) as Sprite2D
+	if not tex[1]:
+		node.modulate = BUILD_GHOST_TINT
+	add_blocker(base_rect(pos, done.get_size()))
+	return node
+
+
+func finish_building(node: Sprite2D, kind: StringName) -> void:
+	node.texture = BUILD_TEX[kind][0]
+	node.modulate = Color.WHITE
+
+
+func add_blocker(r: Rect2) -> void:
+	blockers.append(r)
+	_mark_solid(r)
+
+
+## Caixa de cada platô (topo + parede), como o _off_plateau() calcula.
+func _plateau_rects() -> Array[Rect2]:
+	var out: Array[Rect2] = []
+	for pl in PLATEAUS:
+		var box: Rect2i = pl["parts"][0]
+		for r: Rect2i in pl["parts"]:
+			box = box.merge(r)
+		box.size.y += WALL_ROWS
+		out.append(Rect2(Vector2(box.position) * TILE, Vector2(box.size) * TILE))
+	return out
 
 
 ## Camadas de chão: água no mundo inteiro, espuma cercando a ilha, a ilha de
@@ -506,15 +599,13 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 	# Quem está mais embaixo é desenhado por cima — vale entre cenário e
 	# unidades, que entram neste mesmo nó pelo add_unit().
 	decor.y_sort_enabled = true
-	for b in BUILDINGS:
-		var tex: Texture2D = b[0]
-		var pos := _fit(ISLAND.position + (b[1] as Vector2) * ISLAND.size, tex, 1)
-		_add_decor(tex, pos, 1)
-		# Base da construção: a metade de baixo, sem a beirada do telhado.
-		var size := tex.get_size()
-		blockers.append(Rect2(pos + Vector2(size.x * 0.15, size.y * 0.5),
-				Vector2(size.x * 0.7, size.y * 0.45)))
-		building_spots.append(pos + Vector2(size.x * 0.5, size.y + 20.0))
+	var castle_pos := _fit(ISLAND.position + MAIN_CASTLE_AT * ISLAND.size, MAIN_CASTLE, 1)
+	_add_decor(MAIN_CASTLE, castle_pos, 1)
+	var castle_size := MAIN_CASTLE.get_size()
+	_castle_rect = Rect2(castle_pos, castle_size)
+	blockers.append(base_rect(castle_pos, castle_size))
+	main_castle_spot = castle_pos + Vector2(castle_size.x * 0.5, castle_size.y + 20.0)
+	castle_spots.append(main_castle_spot)
 	for _i in 60:
 		var idx := rng.randi() % TREES.size()
 		var tree: Texture2D = TREES[idx]
@@ -668,16 +759,17 @@ func _edge_spot(rng: RandomNumberGenerator) -> Vector2:
 	return _off_plateau(ISLAND.position + Vector2(rng.randf(), y) * ISLAND.size)
 
 
-## Empurra o ponto pra fora do platô mais perto, pelo lado mais curto. Sortear
-## de novo até cair fora seria loop sem teto garantido; isto sempre termina.
+## Empurra o ponto pra fora dos platôs e do castelo principal, pelo lado mais
+## curto. Sortear de novo até cair fora seria loop sem teto garantido; isto
+## sempre termina.
 func _off_plateau(p: Vector2) -> Vector2:
-	for pl in PLATEAUS:
-		var box: Rect2i = pl["parts"][0]
-		for r: Rect2i in pl["parts"]:
-			box = box.merge(r)
-		box.size.y += WALL_ROWS
-		var rect := Rect2(Vector2(box.position) * TILE,
-				Vector2(box.size) * TILE).grow(PLATEAU_CLEAR)
+	var zones: Array[Rect2] = []
+	for box in _plateau_rects():
+		zones.append(box.grow(PLATEAU_CLEAR))
+	if _castle_rect.has_area():
+		zones.append(_castle_rect.grow_individual(CASTLE_CLEAR_TOP_LEFT.x,
+				CASTLE_CLEAR_TOP_LEFT.y, CASTLE_CLEAR, CASTLE_PLAZA))
+	for rect in zones:
 		if not rect.has_point(p):
 			continue
 		var left := p.x - rect.position.x

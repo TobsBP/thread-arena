@@ -53,6 +53,7 @@ var _fps: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _units: Array[Player] = []
 var _frame_t0 := 0
 var _level := 1
+var _no_mobs := false
 var _history: Array[PackedFloat32Array] = []
 ## StyleBox por unidade: só pra ter canto arredondado sem realocar por frame.
 var _bars: Array[StyleBoxFlat] = []
@@ -105,6 +106,7 @@ func update_stats(
 	units: Array[Player],
 	frame_t0: int,
 	level: int,
+	no_mobs: bool,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
@@ -112,6 +114,7 @@ func update_stats(
 	_units = units
 	_frame_t0 = frame_t0
 	_level = level
+	_no_mobs = no_mobs
 	_record()
 
 	info.text = "\n".join([
@@ -119,7 +122,7 @@ func update_stats(
 		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
-		"[color=%s][ESPAÇO] alternar modo   [B] bots   [H] menos info[/color]" % DIM,
+		"[color=%s][ESPAÇO] modo  [B] bots  [H] info  [T] castelo  [M] mobs[/color]" % DIM,
 	])
 	queue_redraw()
 
@@ -162,12 +165,13 @@ func _bar_box() -> StyleBoxFlat:
 
 
 func _mode_title() -> String:
+	var lvl := "LEVEL %d%s" % [_level, " — SEM MOBS" if _no_mobs else ""]
 	if _use_threads:
-		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas — LEVEL %d[/font_size]" % [
-			GOOD, _units.size(), _level,
+		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas — %s[/font_size]" % [
+			GOOD, _units.size(), lvl,
 		]
-	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread — LEVEL %d[/font_size]" % [
-		BAD, _level,
+	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread — %s[/font_size]" % [
+		BAD, lvl,
 	]
 
 

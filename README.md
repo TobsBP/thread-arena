@@ -17,6 +17,8 @@ jogo volta pra seleção de personagem).
 | `ESPAÇO` | alterna SERIAL ↔ THREADS |
 | `H` | menos informação no HUD (cicla 3 níveis) |
 | `G` | invoca um goblin avulso, tipo aleatório |
+| `T` | perto do castelo azul: abre o menu do castelo (pausa o jogo) |
+| `M` | modo sem mobs: some com os goblins e para as ondas (o level segue subindo pelo tempo) |
 | `ESC` | volta pra seleção de personagem |
 
 Cada player tem 6 teclas: mover (4), atacar e uma 6ª que vira guarda, coleta
@@ -53,6 +55,34 @@ a fase acaba quando mata todo mundo ou quando o tempo estoura — o que vier
 primeiro. Não acumula: a próxima onda começa limpa. `[G]` solta um goblin
 avulso de tipo aleatório a qualquer momento, até um teto de segurança —
 é a forma mais rápida de ver o comparativo serial × threads esticar.
+
+### Castelos e evolução
+
+A madeira e o ouro que o Camponês coleta são entregues nos **castelos** e vão
+pro banco do reino (`Kingdom`). O castelo azul é o principal: chegar perto e
+apertar `[T]` abre o menu, com três abas:
+
+- **Evolução**: a árvore (`UpgradeTree`). Cada nó custa madeira/ouro e
+  exige um level mínimo. Ela aumenta o total de trabalhadores, abre vagas por
+  profissão (Lenhador desde o início, Minerador no L3, Açougueiro no L5 e
+  Curandeiro no L7) e libera as construções.
+- **Trabalhadores**: distribui o total entre as profissões liberadas. Por
+  enquanto é só número, os trabalhadores ainda não nascem no mapa.
+- **Construir**: Casa (+2 trabalhadores), Castelo (novo ponto de entrega),
+  Torre (atira nos goblins) e Quartel (+vida máxima). Depois de escolher,
+  aparece um fantasma na frente do player: o ataque confirma e a 6ª tecla
+  (ou ESC) cancela. A obra leva alguns segundos pra ficar pronta.
+
+No menu: dá pra usar o mouse (clicar no nó compra, − e + nos trabalhadores,
+✕ fecha) ou o teclado: setas/WASD movem, Enter/F confirma, Q tira 1, Tab
+troca de aba e ESC/T fecha.
+
+No canto superior direito fica o status (level, madeira, ouro,
+trabalhadores). No inferior direito ficam os comandos dos 3 players numa lista
+só: uma linha por ação, com a tecla de cada player marcada com a cor dele. Em
+destaque aparece o que dá pra fazer naquele momento, como "[T] abrir o
+castelo" ao chegar perto dele. Por enquanto o banco está **infinito**
+(`Kingdom.INFINITE_BANK`), e só os levels travam a árvore.
 
 ## Estrutura
 
