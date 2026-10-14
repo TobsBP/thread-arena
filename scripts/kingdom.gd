@@ -24,6 +24,8 @@ var village: Village  ## o estoque de verdade; main.gd liga ao criar a vila
 ## Começa com 2 lenhadores e 1 minerador: o minerador é o que faz o ouro
 ## entrar desde o início, mesmo no modo sem mobs.
 var max_workers := 3
+## Inflação do ouro da árvore (sobe a cada level).
+var price_mult := 1.0
 var job_cap: Array[int] = [2, 1, 0, 0]  ## 0 = profissão travada
 var assigned: Array[int] = [2, 1, 0, 0]
 var bought: Dictionary[StringName, bool] = {}
@@ -70,7 +72,7 @@ func buy_block(id: StringName, level: int) -> String:
 		return "requer %s" % UpgradeTree.find(node.requires).title
 	if level < node.level:
 		return "Level %d" % node.level
-	if not has_funds(node.wood, node.gold):
+	if not has_funds(node.wood, price(node.gold)):
 		return "sem recurso"
 	return ""
 
@@ -79,7 +81,7 @@ func buy(id: StringName, level: int) -> bool:
 	if not buy_block(id, level).is_empty():
 		return false
 	var node := UpgradeTree.find(id)
-	pay(node.wood, node.gold)
+	pay(node.wood, price(node.gold))
 	bought[id] = true
 	var fx: Dictionary = node.effect
 	max_workers += fx.get("max_workers", 0)
@@ -126,6 +128,11 @@ func auto_assign() -> void:
 		if best < 0:
 			return
 		assigned[best] += 1
+
+
+## Preço em ouro de agora, com a inflação.
+func price(gold: int) -> int:
+	return ceili(gold * price_mult)
 
 
 func is_job_unlocked(job: int) -> bool:

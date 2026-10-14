@@ -352,7 +352,7 @@ func _draw_card(card: Rect2, node: Dictionary, selected: bool) -> void:
 	draw_rect(card, fill)
 	draw_rect(card, CURSOR if selected else Color(0, 0, 0, 0.25), false, 3.0 if selected else 1.0)
 	_ink(card.position + Vector2(6, 18), node.title, 13, INK)
-	_draw_cost(card.position + Vector2(6, 42), node.wood, node.gold)
+	_draw_cost(card.position + Vector2(6, 42), node.wood, _kingdom.price(node.gold))
 	_ink(card.position + Vector2(6, card.size.y - 8), status, 12, status_col)
 
 
