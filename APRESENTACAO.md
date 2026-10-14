@@ -285,11 +285,19 @@ quem executa os passos, não o algoritmo de movimento.
 
 ### Reserva da carne: a seção crítica do `Mutex`
 
-Os entregadores também tentam reservar drops em tarefas paralelas. Com `[X]
-Mutex ON`, `_claim_meat()` protege com `meat_mutex.lock()` e `unlock()` a
-checagem de `MeatDrop.claimed` e a reserva. Se outro entregador já reservou
-aquele drop, a tarefa tenta o próximo. O lock cobre só essa decisão; a viagem e
-a cura rodam fora dele, na main thread.
+Os entregadores tentam reservar drops em tarefas paralelas. Há quatro pawns,
+mas o semáforo `claim_semaphore` tem duas permissões. `_ready()` libera as vagas
+com `post(2)`. Em `_claim_meat()`, cada tarefa chama `wait()` para ocupar uma
+vaga e `post()` ao terminar para devolvê-la. Se as duas vagas estiverem ocupadas,
+as outras tarefas esperam. Assim, no máximo dois entregadores ficam nessa etapa
+ao mesmo tempo.
+
+O semáforo limita **quantas tarefas entram**; ele não protege sozinho a carne.
+Com `[X] Mutex ON`, `_claim_meat()` usa `meat_mutex.lock()` e `unlock()` para
+proteger a checagem de `MeatDrop.claimed` e a reserva exclusiva. O Mutex deixa
+uma thread por vez nessa seção crítica, mesmo que o semáforo admita duas tarefas
+na etapa. Se outro entregador já reservou aquele drop, a tarefa tenta o próximo.
+O lock cobre só essa decisão; a viagem e a cura rodam fora dele, na main thread.
 
 Com o Mutex OFF, as tarefas leem o mesmo snapshot antes de publicar as reservas.
 O jogo aplica as propostas depois do join, então dois entregadores podem levar
@@ -298,8 +306,19 @@ não é uma data race real na memória do jogo. O HUD conta disputas e duplicaç
 
 `[C]` alterna três políticas de escalonamento: entregar ao ferido mais próximo,
 priorizar a menor porcentagem de vida ou alternar entre os feridos em rodízio.
-Isso escolhe quem recebe cada carga; multitarefa e sincronismo são conceitos
-separados, demonstrados pelas tarefas paralelas e pelo `Mutex`.
+Isso escolhe quem recebe cada carga; é uma política do jogo, não o escalonador
+do sistema operacional.
+
+### Sincronismo: esperar as tarefas
+
+Sincronismo é coordenar tarefas para que cada etapa espere a outra quando
+precisa. `wait()` do semáforo espera até haver uma vaga e consome essa permissão;
+`post()` devolve uma vaga. Já `Thread.wait_to_finish()` espera a thread terminar
+por completo. Em `_assign_courier_jobs()`, a main thread faz esse join antes de
+agrupar as propostas. No passo de combate, também espera todas as threads de
+unidades antes de resolver ataques e colisões. Portanto, sincronismo é o
+conceito geral; semáforo, Mutex e `wait_to_finish()` são mecanismos com funções
+diferentes.
 
 ### O que fica em cada thread
 
@@ -515,7 +534,9 @@ para equilibrar.
 | **Data race** | Dois acessos concorrentes ao mesmo endereço, um sendo escrita, sem sincronização → indefinido | seção crítica |
 | **Race condition** | O resultado depende da ordem de execução das threads | Mutex OFF (simulada) |
 | **Seção crítica** | Trecho que só uma thread pode executar por vez | reserva de carne |
-| **Mutex** | Primitiva que protege a reserva compartilhada de carne | `main.gd` |
+| **Mutex** | Deixa uma thread por vez conferir e reservar um drop | `_claim_meat()` |
+| **Semáforo** | Limita a duas as tarefas simultâneas na etapa de reserva | `wait()` / `post()` |
+| **Sincronismo** | Coordena etapas e dependências entre tarefas | semáforo, Mutex e join |
 | **Deadlock** | Threads esperando umas pelas outras em ciclo; nada progride | seção 0 |
 | **Contenção** | Threads disputando o mesmo lock, esperando mais do que trabalhando | seção 0 |
 | **Thread pool** | Threads criadas uma vez e reutilizadas — conceito do Godot; esta demo usa `Thread.new()` | conceito |

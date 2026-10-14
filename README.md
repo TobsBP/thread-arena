@@ -47,15 +47,18 @@ o FPS se mantém — a diferença aumenta conforme mais goblins entram em campo
 Cada unidade escreve só nos próprios campos (`Player.step()`), então esse passo
 não precisa de lock: é paralelismo com dados particionados. A entrega de carne
 mostra o caso diferente: vários entregadores disputam a reserva de um mesmo
-drop. Com `X` ligado, um `Mutex` protege a verificação e reserva; desligado, a
-demo simula uma corrida lógica reproduzível que pode duplicar a entrega. O modo
-sem Mutex usa um snapshot compartilhado e aplica o conflito depois da barreira,
-evitando uma data race real e imprevisível na memória do jogo.
+drop. Um semáforo com duas permissões limita a dois os entregadores tentando
+reservar carne simultaneamente. Com `X` ligado, um `Mutex` protege a verificação
+e a reserva exclusiva de cada drop; desligado, a demo simula uma corrida lógica
+reproduzível que pode duplicar a entrega. O modo sem Mutex usa um snapshot
+compartilhado e aplica o conflito depois da barreira, evitando uma data race
+real e imprevisível na memória do jogo. O semáforo controla quantas tarefas
+entram; o Mutex protege o recurso compartilhado.
 
 Os pawns agora levam a carne que cai das ovelhas até players feridos. `C`
 alterna entre três políticas: o player ferido mais perto, o de menor vida
-proporcional e rodízio entre os feridos. O HUD mostra a política ativa, o estado
-do Mutex, disputas e entregas duplicadas.
+proporcional e rodízio entre os feridos. O HUD mostra a política ativa, as duas
+vagas do semáforo, o estado do Mutex, disputas e entregas duplicadas.
 
 ### Levels
 

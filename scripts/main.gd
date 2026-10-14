@@ -98,6 +98,9 @@ const PAWN_WOOD_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (
 const PAWN_AXE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Axe.png")
 const PAWN_COUNT := 4
 const PAWN_SPEED := 120.0
+## Limite didático: dos quatro entregadores, no máximo dois tentam reservar
+## carne ao mesmo tempo. O Semaphore é abastecido uma vez no _ready().
+const MAX_CONCURRENT_CLAIMS := 2
 
 ## Ovelhas do pack Update 010 — mais fofas que a versão antiga (Sheep_Grass/Move).
 const SHEEP_GRAZE := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Sheep/HappySheep_Idle.png")
@@ -162,6 +165,7 @@ var meat_drops: Array[MeatDrop] = []  ## carne largada por ovelha morta, no chã
 ## A reserva é o recurso compartilhado da demonstração. O lock protege somente
 ## a operação curta de conferir e reservar a carne, nunca a viagem do pawn.
 var meat_mutex := Mutex.new()
+var claim_semaphore := Semaphore.new()
 var mutex_enabled := true
 var delivery_strategy := DeliveryStrategy.NEAREST
 var contested_claims := 0
@@ -213,6 +217,7 @@ func _ready() -> void:
 	_spawn_players()
 	_spawn_sheep()
 	_spawn_workers()
+	claim_semaphore.post(MAX_CONCURRENT_CLAIMS)
 	bodies.assign(units)
 	bodies.append_array(sheep)
 	bodies.append_array(workers)
@@ -672,9 +677,12 @@ func _assign_courier_jobs() -> void:
 ## Worker entry point. Com mutex, a checagem e a reserva são uma seção crítica;
 ## sem mutex, cada tarefa lê o mesmo snapshot e devolve sua proposta.
 func _claim_meat(candidates: Array[MeatDrop]) -> Dictionary:
+	# Semáforo conta vagas: quatro tarefas de pawn competem por duas permissões.
+	# wait() bloqueia as demais até uma tarefa devolver uma vaga com post().
+	claim_semaphore.wait()
+	var result: Dictionary = {"drop": null, "contended": false}
 	if mutex_enabled:
 		meat_mutex.lock()
-		var result := {"drop": null, "contended": false}
 		for drop in candidates:
 			if drop.claimed:
 				result["contended"] = true
@@ -683,13 +691,13 @@ func _claim_meat(candidates: Array[MeatDrop]) -> Dictionary:
 			result["drop"] = drop
 			break
 		meat_mutex.unlock()
-		return result
 	else:
 		# Deliberadamente não publica a reserva aqui: todas as tarefas leem a
 		# mesma fotografia anterior à disputa. O conflito é aplicado após o join.
 		if not candidates.is_empty():
-			return {"drop": candidates[0], "contended": false}
-	return {"drop": null, "contended": false}
+			result["drop"] = candidates[0]
+	claim_semaphore.post()
+	return result
 
 
 func _update_courier(worker: Player, delta: float) -> void:

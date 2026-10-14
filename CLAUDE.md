@@ -166,11 +166,15 @@ feridos. Os dois rodam na main thread para movimento/desenho e ficam
 fora de `units` — não entram na comparação serial/threads, só na colisão, via
 `bodies` (= `units` + `sheep` + `workers`).
 
-A atribuição de drops usa uma Thread por entregador livre. `Mutex` protege a
-checagem e reserva de `MeatDrop.claimed`; o movimento e a cura continuam na main
-thread. Com o toggle OFF, a demonstração usa um snapshot comum e aplica a
-duplicação depois do join, de forma reproduzível e sem data race real. `[C]`
-alterna política (perto, menor vida, rodízio) e `[X]` alterna o Mutex.
+A atribuição de drops usa uma Thread por entregador livre. Um `Semaphore` começa
+com duas permissões: `wait()` consome uma vaga antes da tentativa e `post()` a
+devolve ao terminar, limitando a dois os quatro entregadores nessa etapa.
+`Mutex` protege a checagem e reserva exclusiva de `MeatDrop.claimed`; semáforo
+limita a quantidade de tarefas admitidas e não substitui esse lock. O movimento
+e a cura continuam na main thread. Com o toggle OFF, a demonstração usa um
+snapshot comum e aplica a duplicação depois do join, de forma reproduzível e sem
+data race real. `[C]` alterna política (perto, menor vida, rodízio) e `[X]`
+alterna o Mutex.
 
 ## Convenções
 
