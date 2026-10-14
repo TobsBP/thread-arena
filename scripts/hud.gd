@@ -46,17 +46,46 @@ const GAUGE_H := 30.0   ## barra grande do comparativo
 const AVATAR := 22.0
 const PAD := 10.0
 const SAMPLES := 90  ## ~frames guardados por unidade
+const VILLAGE_W := 330.0  ## painel da vila
+const VILLAGE_LINE := 18.0
+## Onde o painel da vila começa.
+const VILLAGE_TOP := 104.0
+## Com tudo à mostra, a lista de comandos do SidePanel ocupa o canto de baixo à direita.
+const CAPTION_LIFT := 150.0
 
 var _use_threads := false
 var _ms: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _fps: Dictionary[bool, float] = {false: 0.0, true: 0.0}
 var _units: Array[Player] = []
 var _frame_t0 := 0
+var _level := 1
+var _no_mobs := false
 var _history: Array[PackedFloat32Array] = []
 ## StyleBox por unidade: só pra ter canto arredondado sem realocar por frame.
 var _bars: Array[StyleBoxFlat] = []
 ## 0 = tudo, 1 = só o painel de números, 2 = nada. Alterna com [H].
 var detail := 0
+## Números da vila, prontos de main.gd (_village_stats) — vazio até o 1º frame.
+var _village := {}
+## Legenda do modo apresentação ([C] em main.gd): vazia = câmera nos players.
+var _camera_caption := ""
+## Aviso curto no lugar da legenda (ex.: [T] longe do castelo): texto e até quando (ms) ele fica.
+var _notice := ""
+var _notice_until := 0
+## Altura e passo das barras da linha do tempo.
+var _bar_h := BAR_H
+var _bar_step := BAR_H + 5.0
+
+## Hardware/software da máquina que tá rodando — lido uma vez, não muda em
+## runtime. É o que explica "no meu PC deu Xx, no do meu amigo deu Yx": a
+## demo mede o ganho de threads, e esse ganho depende de quantos núcleos
+## existem de verdade pra rodar em paralelo (o resto — GPU, SO, versão do
+## Godot — é só contexto de "em que máquina isso foi medido").
+var _cpu_name := ""
+var _cpu_cores := 1
+var _gpu_name := ""
+var _os_name := ""
+var _godot_version := ""
 
 @onready var info: RichTextLabel = $Info
 
@@ -68,6 +97,15 @@ func _ready() -> void:
 	info.add_theme_stylebox_override("normal", box)
 	# Sem isto o texto sem [color] sai branco — invisível sobre o papel.
 	info.add_theme_color_override("default_color", INK)
+	_cpu_name = OS.get_processor_name()
+	if _cpu_name.is_empty():
+		_cpu_name = OS.get_name()  ## alguma plataforma pode não expor o nome do processador
+	_cpu_cores = OS.get_processor_count()
+	_gpu_name = RenderingServer.get_video_adapter_name()
+	if _gpu_name.is_empty():
+		_gpu_name = "GPU desconhecida"
+	_os_name = OS.get_name()
+	_godot_version = Engine.get_version_info().string
 
 
 ## [H]: menos informação na tela.
@@ -77,27 +115,65 @@ func cycle_detail() -> void:
 	queue_redraw()
 
 
+func update_village(stats: Dictionary) -> void:
+	_village = stats
+
+
+func set_camera_caption(text: String) -> void:
+	_camera_caption = text
+	queue_redraw()
+
+
+func show_notice(text: String, seconds: float) -> void:
+	_notice = text
+	_notice_until = Time.get_ticks_msec() + int(seconds * 1000.0)
+	queue_redraw()
+
+
+## Quanto o meio da área livre da tela está à direita do meio da janela.
+func free_center_shift() -> float:
+	if detail > 1:
+		return 0.0
+	return (WIDTH - VILLAGE_W - 26.0) * 0.5
+
+
 func update_stats(
 	use_threads: bool,
 	ms: Dictionary[bool, float],
 	fps: Dictionary[bool, float],
 	units: Array[Player],
 	frame_t0: int,
+	level: int,
+	no_mobs: bool,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
 	_fps = fps
 	_units = units
 	_frame_t0 = frame_t0
+	_level = level
+	_no_mobs = no_mobs
 	_record()
 
 	info.text = "\n".join([
 		"[font_size=20][b]%s[/b][/font_size]" % _mode_title(),
+		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
-		"[color=%s][ESPAÇO] alternar modo   [H] menos info[/color]" % DIM,
+		"[color=%s][ESPAÇO] modo  [B] bots  [H] info  [T] castelo  [M] mobs  [X] mutex  [V] filas  [Z] cura  [C] câmera[/color]" % DIM,
 	])
 	queue_redraw()
+
+
+## Tudo sobre a máquina numa linha só (CPU/núcleos/threads em uso — o que
+## importa pro comparativo — mais GPU/SO/versão do Godot, só contexto de "em
+## que máquina isso foi medido"). Junto em vez de duas linhas separadas pra
+## não esticar o painel.
+func _system_line() -> String:
+	var used := _units.size() if _use_threads else 1
+	return "%s (%d núcleos, %d em uso)   —   %s   —   %s   —   Godot %s" % [
+		_cpu_name, _cpu_cores, used, _gpu_name, _os_name, _godot_version,
+	]
 
 
 ## Janela deslizante do tempo de cada unidade, alimenta os mini-gráficos.
@@ -105,6 +181,13 @@ func _record() -> void:
 	while _history.size() < _units.size():
 		_history.append(PackedFloat32Array())
 		_bars.append(_bar_box())
+	# Onda de goblin morreu: units encolhe. Corta o excedente pra
+	# _draw_history() nunca indexar _units além do fim — o índice que sobra
+	# passa a pertencer a outra unidade, então o gráfico dela pula uma vez
+	# (cosmético, não trava).
+	while _history.size() > _units.size():
+		_history.pop_back()
+		_bars.pop_back()
 	for i in _units.size():
 		var h := _history[i]
 		h.append((_units[i].t_end - _units[i].t_start) / 1000.0)
@@ -120,11 +203,14 @@ func _bar_box() -> StyleBoxFlat:
 
 
 func _mode_title() -> String:
+	var lvl := "LEVEL %d%s" % [_level, " — SEM MOBS" if _no_mobs else ""]
 	if _use_threads:
-		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas[/font_size]" % [
-			GOOD, _units.size(),
+		return "[color=%s]▮▮▮ THREADS[/color]  [font_size=13]%d Threads paralelas — %s[/font_size]" % [
+			GOOD, _units.size(), lvl,
 		]
-	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread[/font_size]" % BAD
+	return "[color=%s]▮ SERIAL[/color]  [font_size=13]tudo na main thread — %s[/font_size]" % [
+		BAD, lvl,
+	]
 
 
 ## Só compara depois de ter medido os dois modos.
@@ -138,25 +224,104 @@ func _verdict() -> String:
 
 
 func _draw() -> void:
+	_draw_camera_caption()
 	if detail > 1:
 		return
 	# Papel atrás do painel de texto (o Control desenha antes dos filhos).
 	PackUI.nine(self, PAPER, Rect2(0, 0, WIDTH, info.size.y), PAPER_CAP)
+	_draw_village()
 	if detail != 0:
 		return
 	# Layout a partir da altura real do painel: ele cresce com o texto.
 	# Altura vem do número de unidades: entra/sai inimigo sem quebrar o layout.
-	# As alturas são apertadas de propósito — com 4 unidades a pilha inteira
-	# tem que caber na janela, senão o último painel sai pela borda de baixo.
 	var n := maxf(_units.size(), 1)
 	var y := info.size.y + GAP
 	var gauge_h := PAD + 2.0 * (GAUGE_H + 8.0)
-	var timeline_h := PAD + n * (BAR_H + 5)
-	var hist_h := PAD + n * (LANE_H + 4)
 	_draw_gauges(Rect2(0, y, WIDTH, gauge_h))
 	y += gauge_h + GAP + PAD
+	# Com os aldeões (cada um é uma unidade) a pilha inteira não cabe mais na janela.
+	var room := get_viewport_rect().size.y - position.y - y - 14.0
+	var timeline_h := PAD + n * (BAR_H + 5)
+	var hist_h := PAD + n * (LANE_H + 4)
+	var show_history := timeline_h + GAP + PAD + hist_h <= room
+	_bar_step = BAR_H + 5.0
+	if timeline_h > room:
+		_bar_step = maxf((room - PAD) / n, 4.0)
+		timeline_h = PAD + n * _bar_step
+	_bar_h = clampf(_bar_step - 3.0, 3.0, BAR_H)
 	_draw_timeline(Rect2(0, y, WIDTH, timeline_h))
-	_draw_history(Rect2(0, y + timeline_h + GAP + PAD, WIDTH, hist_h))
+	if show_history:
+		_draw_history(Rect2(0, y + timeline_h + GAP + PAD, WIDTH, hist_h))
+
+
+## Legenda do modo apresentação, embaixo no meio.
+func _draw_camera_caption() -> void:
+	var noticing := Time.get_ticks_msec() < _notice_until
+	if _camera_caption.is_empty() and not noticing:
+		return
+	var vp := get_viewport_rect().size
+	var font := ThemeDB.fallback_font
+	var text := _notice if noticing else _camera_caption + "    [C] próximo"
+	# Com tudo à mostra, a pilha da esquerda desce até o pé da tela.
+	var left := WIDTH + 24.0 if detail == 0 else 0.0
+	var room := vp.x - position.x - left - 12.0
+	var font_size := 16
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 44.0
+	if w > room:
+		font_size = 13
+		w = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 44.0
+	var lift := CAPTION_LIFT if detail == 0 else 0.0
+	var rect := Rect2(left + (room - w) * 0.5, vp.y - 58.0 - lift - position.y, w, 40.0)
+	PackUI.nine(self, PAPER, rect, PAPER_CAP)
+	_ink(rect.position + Vector2(22, 26), text, font_size, INK,
+			HORIZONTAL_ALIGNMENT_LEFT, -1.0, Color(1, 1, 1, 0.7))
+
+
+## Painel da vila, no canto de cima à direita.
+func _draw_village() -> void:
+	if _village.is_empty():
+		return
+	var v := _village
+	var mutex_on: bool = v.mutex
+	var lost: float = maxf(v.delivered - v.counted, 0.0)
+	var lines := [
+		["madeira %d    ouro %d" % [floori(v.wood + 0.001), floori(v.gold + 0.001)], INK],
+		["carne crua %d    assada %d" % [floori(v.meat + 0.001), v.roasts], INK],
+		["cura primeiro: %s   [Z]" % v.heal, INK_SOFT],
+		["fogueira: %s" % ("acesa, %ds de lenha" % ceili(v.fire) if v.fire > 0.0
+				else "apagada (1 lenha acende)"), INK_SOFT],
+		["", INK],
+		["MUTEX do armazém: %s   [X]" % ("LIGADO" if mutex_on else "DESLIGADO"),
+				Color(GOOD) if mutex_on else Color(BAD)],
+		["entregue %.1f   contado %.1f" % [v.delivered, v.counted], INK],
+		["perdido %.1f%s" % [lost, _lost_note(mutex_on, v.threads, lost)],
+				Color(BAD) if lost > 0.05 else INK_SOFT],
+		["ARSENAL nível %d  —  próximo: %d de ouro   [P]" % [v.arsenal, v.arsenal_cost], INK],
+		["preços: +%d%% (sobem a cada level)" % roundi((v.inflation - 1.0) * 100.0), INK_SOFT],
+		["", INK],
+		["SEMÁFOROS (filas): %s   [V]" % ("LIGADOS" if v.semaphores else "DESLIGADOS"),
+				Color(GOOD) if v.semaphores else Color(BAD)],
+		["SEMÁFORO armazém: %d/%d dentro, fila %d" % [v.door_used, Village.DEPOT_SLOTS, v.door_queue], INK],
+		["SEMÁFORO mina: %d/%d vagas, fila %d" % [v.mine_used, Village.MINE_SLOTS, v.mine_queue], INK],
+		["SEMÁFORO espeto: %d/%d em uso, fila %d" % [v.fire_used, Village.FIRE_SLOTS, v.fire_queue], INK],
+		["SEMÁFORO assadas prontas: %d" % v.roasts, INK],
+	]
+	var rect := Rect2(get_viewport_rect().size.x - position.x - VILLAGE_W - 26.0,
+			VILLAGE_TOP + TITLE_H - position.y,
+			VILLAGE_W, lines.size() * VILLAGE_LINE + 6.0)
+	_frame(rect, "vila — o que as threads dividem")
+	for i in lines.size():
+		_ink(rect.position + Vector2(6, 14 + i * VILLAGE_LINE), lines[i][0], 13, lines[i][1],
+				HORIZONTAL_ALIGNMENT_LEFT, -1.0, Color(1, 1, 1, 0.7))
+
+
+## Por que (não) está perdendo: sem mutex a soma some só quando duas Threads descarregam juntas.
+func _lost_note(mutex_on: bool, threads: bool, lost: float) -> String:
+	if mutex_on:
+		return "" if lost <= 0.05 else "  (de quando estava desligado)"
+	if not threads:
+		return "  (serial: sem disputa)"
+	return "  ← corrida!" if lost > 0.05 else "  (ainda sem colisão)"
 
 
 ## Moldura de papel com o título dentro dela: antes o título caía na borda de
@@ -239,29 +404,34 @@ func _draw_timeline(rect: Rect2) -> void:
 
 	for i in _units.size():
 		var p := _units[i]
-		var y := 8 + i * (BAR_H + 5)
+		var y := 8 + i * _bar_step
 		var x0 := float(p.t_start - _frame_t0) / span
 		var x1 := minf(float(p.t_end - _frame_t0) / span, 1.0)
 		# Trilho: mostra o quanto da régua a barra NÃO ocupa.
 		draw_rect(
-			Rect2(rect.position + Vector2(0, y), Vector2(rect.size.x, BAR_H)),
+			Rect2(rect.position + Vector2(0, y), Vector2(rect.size.x, _bar_h)),
 			TRACK,
 		)
 		var bar := Rect2(
 			rect.position + Vector2(rect.size.x * x0, y),
-			Vector2(maxf(rect.size.x * (x1 - x0), 3.0), BAR_H),
+			Vector2(maxf(rect.size.x * (x1 - x0), 3.0), _bar_h),
 		)
 		_bars[i].bg_color = p.color
 		draw_style_box(_bars[i], bar)
-		_ink(bar.position + Vector2(8, BAR_H - 6),
-				"%s  %.2f ms" % [_label(i), (p.t_end - p.t_start) / 1000.0],
-				13, Color(1, 1, 1, 0.95))
+		# Barra encolhida demais não cabe letra: fica só a cor.
+		if _bar_h >= 11.0:
+			var font_size := clampi(int(_bar_h) - 4, 9, 13)
+			_ink(bar.position + Vector2(8, _bar_h - (_bar_h - font_size) * 0.5 - 2.0),
+					"%s  %.2f ms" % [_label(i), (p.t_end - p.t_start) / 1000.0],
+					font_size, Color(1, 1, 1, 0.95))
 
 
-## Rótulo da faixa: os controláveis são P1..Pn, o inimigo é E.
+## Rótulo da faixa: os controláveis são P1..Pn, o aldeão é A e o inimigo é E.
 func _label(i: int) -> String:
 	if i < _units.size() and _units[i].is_enemy:
 		return "E "
+	if i < _units.size() and _units[i].is_worker:
+		return "A "
 	return "P%d" % (i + 1)
 
 
