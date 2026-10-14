@@ -68,6 +68,8 @@ const CASTLE_REACH := 140.0
 const BUILD_AHEAD := 60.0  ## folga entre o pé do player e a base da obra
 const TOWER_RANGE := 420.0
 const TOWER_COOLDOWN := 1.4  ## segundos entre flechas da torre
+## Quadro do Archer_Shoot em que a flecha sai do arco.
+const TOWER_RELEASE_FRAME := 5.0
 const BARRACKS_HP := 15.0  ## vida máxima a mais por Quartel pronto...
 const BARRACKS_MAX := 3  ## ...até este tanto de quartéis
 ## "black": 4ª skin da tela de seleção — Lanceiro (golpe de lança + guarda
@@ -95,8 +97,17 @@ const PAWN_AXE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (F
 const PAWN_DIR := "res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/%s Units/Pawn/Pawn_%s.png"
 ## Teto de aldeões no mapa, por mais que o reino tenha moradia.
 const MAX_VILLAGERS := 10
-## Goblin derrubado rende ouro pro reino: é a parte dos players na economia.
-const GOBLIN_GOLD := 1
+## Goblin não dá ouro: todo ouro passa pelo armazém (mutex e fila).
+const GOBLIN_GOLD := 0
+## Arsenal [P]: cada nível dá mais dano e vida aos players e fica mais caro.
+const ARSENAL_BASE := 8.0
+const ARSENAL_GROWTH := 1.12
+const ARSENAL_DAMAGE := 0.10  ## +10% de dano por nível
+const ARSENAL_HP := 10.0  ## +10 de vida máxima por nível
+## Árvore e Arsenal ficam 6% mais caros a cada level.
+const INFLATION_PER_LEVEL := 0.06
+## Antes deste level a derrota não conta: uma onda azarada no começo não decide a partida.
+const DEFEAT_FROM_LEVEL := 4
 
 ## Derrota: os três players caídos ao mesmo tempo.
 const PLAYER_RESPAWN_TIME := 6.0
@@ -226,6 +237,8 @@ var _last_healed: Dictionary[Player, float] = {}  ## game_time da última cura d
 var game_over := false
 var game_time := 0.0  ## segundos de partida (para na derrota)
 var _govern_timer := 0.0
+var arsenal := 0  ## níveis de Arsenal comprados
+var player_power := 1.0  ## multiplicador de dano dos players (Arsenal)
 ## Linha de comando (depois do "--"): partida sem ninguém, pra medir. Ver _apply_cli().
 var _auto_quit := false
 var _max_time := 0.0  ## > 0: encerra a partida nesse tempo mesmo sem derrota
@@ -448,6 +461,7 @@ func _level_title(lvl: int) -> String:
 func _start_banner() -> void:
 	level_phase = LevelPhase.BANNER
 	phase_timer = 0.0
+	kingdom.price_mult = 1.0 + INFLATION_PER_LEVEL * (level - 1)
 
 
 func _start_combat() -> void:
@@ -669,6 +683,8 @@ func _nearest_reachable(points: Array[Vector2], from: Vector2) -> Vector2:
 
 ## Os três caídos ao mesmo tempo: acabou.
 func _check_defeat() -> void:
+	if level < DEFEAT_FROM_LEVEL:
+		return
 	for p in players:
 		if not p.is_dead():
 			return
@@ -679,10 +695,10 @@ func _finish_game(why: String) -> void:
 	game_over = true
 	if _auto_quit:
 		var v := _village_stats()
-		print("RESULT fim=%s level=%d tempo=%.0f mutex=%d fila=%d cura=%d entregue=%.1f contado=%.1f perdido=%.1f comprados=%d aldeoes=%d obras=%d madeira=%d ouro=%d" % [
+		print("RESULT fim=%s level=%d tempo=%.0f mutex=%d fila=%d cura=%d entregue=%.1f contado=%.1f perdido=%.1f comprados=%d aldeoes=%d obras=%d madeira=%d ouro=%d arsenal=%d ouro_total=%.1f" % [
 			why, level, game_time, int(village.use_mutex), int(village.use_semaphores), heal_mode,
 			v.delivered, v.counted, v.delivered - v.counted, kingdom.bought.size(),
-			workers.size(), build_sites.size(), kingdom.stock("wood"), kingdom.stock("gold")])
+			workers.size(), build_sites.size(), kingdom.stock("wood"), kingdom.stock("gold"), arsenal, village.gold_in])
 		get_tree().quit()
 
 
@@ -702,6 +718,10 @@ func _apply_cli() -> void:
 			_auto_quit = true
 		elif arg.begins_with("--cura="):
 			heal_mode = clampi(arg.trim_prefix("--cura=").to_int(), 0, HealMode.size() - 1) as HealMode
+		elif arg == "--no-mobs":
+			_toggle_no_mobs()
+		elif arg.begins_with("--seed="):
+			seed(arg.trim_prefix("--seed=").to_int())
 		elif arg.begins_with("--timescale="):
 			Engine.time_scale = arg.trim_prefix("--timescale=").to_float()
 		elif arg.begins_with("--max-time="):
@@ -729,16 +749,23 @@ func _bot_govern(delta: float) -> void:
 	if _govern_timer > 0.0:
 		return
 	_govern_timer = BOT_GOVERN_EVERY
+	# Compra o mais barato entre o próximo nó da árvore e o Arsenal.
+	var next_id: StringName = &""
 	for id in BOT_BUY_ORDER:
 		if kingdom.bought.has(id):
 			continue
 		var why := kingdom.buy_block(id, level)
-		if why.is_empty():
-			kingdom.buy(id, level)
-			hud.show_notice("Os bots compraram: %s" % UpgradeTree.find(id).title, 2.5)
+		if why.is_empty() or why == "sem recurso":
+			next_id = id
+			break
+	var tree_cost: int = kingdom.price(UpgradeTree.find(next_id).gold) if next_id != &"" else 1 << 30
+	if tree_cost <= _arsenal_cost():
+		if next_id != &"" and kingdom.buy_block(next_id, level).is_empty():
+			kingdom.buy(next_id, level)
+			hud.show_notice("Os bots compraram: %s" % UpgradeTree.find(next_id).title, 2.5)
 			return
-		if why == "sem recurso":
-			break  ## guarda o ouro pra este em vez de gastar nos de baixo
+	elif _buy_arsenal():
+		return
 	for kind in BOT_BUILD_ORDER:
 		var have: int = kingdom.built.get(kind, 0)
 		for site in build_sites:
@@ -750,6 +777,27 @@ func _bot_govern(delta: float) -> void:
 			continue
 		if _bot_build(kind):
 			return
+
+
+func _arsenal_cost() -> int:
+	return roundi(ARSENAL_BASE * pow(ARSENAL_GROWTH, arsenal) * kingdom.price_mult)
+
+
+## Compra um nível de Arsenal se tiver ouro.
+func _buy_arsenal() -> bool:
+	var cost := _arsenal_cost()
+	if not kingdom.has_funds(0, cost):
+		return false
+	kingdom.pay(0, cost)
+	arsenal += 1
+	player_power = 1.0 + ARSENAL_DAMAGE * arsenal
+	for p in players:
+		p.max_hp += ARSENAL_HP
+		if not p.is_dead():
+			p.hp += ARSENAL_HP
+	hud.show_notice("Arsenal nível %d: +%d%% de dano, +%d de vida" % [
+			arsenal, roundi(100 * ARSENAL_DAMAGE * arsenal), roundi(ARSENAL_HP * arsenal)], 2.5)
+	return true
 
 
 ## Acha um lugar em volta do castelo e ergue.
@@ -1096,6 +1144,7 @@ func _village_stats() -> Dictionary:
 		roasts = village.roasts, fire = village.fire_fuel,
 		mutex = village.use_mutex, semaphores = village.use_semaphores, threads = use_threads,
 		heal = HEAL_MODE_NAMES[heal_mode],
+		arsenal = arsenal, arsenal_cost = _arsenal_cost(), inflation = kingdom.price_mult,
 		counted = village.counted, delivered = 0.0,
 		mine_used = 0, mine_queue = 0, fire_used = 0, fire_queue = 0,
 		door_used = 0, door_queue = 0,
@@ -1284,6 +1333,8 @@ func _resolve_attacks() -> void:
 				u.attack_hit = true
 				var blocked := v.is_guarding
 				var dmg := u.attack_damage * (u.special_damage_mult if u.is_special else 1.0)
+				if not u.is_enemy:
+					dmg *= player_power
 				if blocked:
 					dmg *= GUARD_DAMAGE_MULT
 					v.block_fx_time = 0.0
@@ -1297,10 +1348,11 @@ func _resolve_attacks() -> void:
 					v.hp = 0.0
 					v.death_time = 0.0
 	for u in to_remove:
-		village.add(Village.Res.GOLD, GOBLIN_GOLD)
-		map.pop_resource(Village.Res.GOLD, u.pos + Vector2(0, 24))
-		damage_numbers.append(DamageNumber.note(u.pos + Vector2(0, 40), "+%d" % GOBLIN_GOLD,
-				RES_TEXT[Village.Res.GOLD]))
+		if GOBLIN_GOLD > 0:
+			village.add(Village.Res.GOLD, GOBLIN_GOLD)
+			map.pop_resource(Village.Res.GOLD, u.pos + Vector2(0, 24))
+			damage_numbers.append(DamageNumber.note(u.pos + Vector2(0, 40), "+%d" % GOBLIN_GOLD,
+					RES_TEXT[Village.Res.GOLD]))
 		_remove_enemy(u)
 
 
@@ -1334,11 +1386,11 @@ func _resolve_arrow_hits() -> void:
 				continue
 			if a.pos.distance_to(u.pos) < ARROW_HIT_RANGE:
 				a.hit = true
-				u.hp -= ARROW_DAMAGE
+				u.hp -= ARROW_DAMAGE * player_power
 				u.hit_flash_time = 0.0
 				u.hit_pop_time = 0.0
 				_knockback(u, a.pos - a.dir * 40.0)  ## empurra na direção que a flecha vinha
-				damage_numbers.append(DamageNumber.new(u.pos, ARROW_DAMAGE))
+				damage_numbers.append(DamageNumber.new(u.pos, ARROW_DAMAGE * player_power))
 				_shake_camera(CAM_SHAKE_SPECIAL if a.mode == Arrow.Mode.RAIN else CAM_SHAKE_HIT)
 				if u.hp <= 0.0:
 					u.hp = 0.0
@@ -1886,6 +1938,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		# Liga/desliga os semáforos de capacidade (as filas)
 		village.set_semaphores_enabled(not village.use_semaphores)
 	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_P:
+		if not _buy_arsenal():
+			hud.show_notice("Arsenal: falta ouro (%d)" % _arsenal_cost(), 2.0)
+	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_X:
 		# Liga/desliga o lock do depósito no armazém (Village.deposit)
 		village.use_mutex = not village.use_mutex
@@ -2098,16 +2154,31 @@ func _update_build_sites(delta: float) -> void:
 		if site.kind != &"tower":
 			continue
 		site.cooldown -= delta
+		if site.release >= 0.0:
+			# A flecha sai quando ele solta a corda.
+			site.release -= delta
+			if site.release < 0.0:
+				var aim := site.aim if site.aim != null and not site.aim.is_dead() \
+						else _nearest_enemy(site.top(), TOWER_RANGE)
+				if aim != null:
+					var side := -1.0 if site.archer.flip_h else 1.0
+					arrows.append(Arrow.new(site.archer.global_position + Vector2(22.0 * side, -6.0),
+							aim.pos, Arrow.Mode.SHOT))
+			continue
 		if site.cooldown > 0.0:
 			continue
 		var target := _nearest_enemy(site.top(), TOWER_RANGE)
 		if target != null:
-			arrows.append(Arrow.new(site.top(), target.pos, Arrow.Mode.SHOT))
+			site.aim = target
+			site.release = TOWER_RELEASE_FRAME / ArenaMap.ARCHER_SHOOT_FPS
 			site.cooldown = TOWER_COOLDOWN
+			map.tower_shoot(site.archer, target.pos)
 
 
 func _on_building_done(site: BuildSite) -> void:
 	kingdom.on_built(site.kind)
+	if site.kind == &"tower":
+		site.archer = map.add_tower_archer(site.node)
 	match site.kind:
 		&"castle":
 			map.castle_spots.append(site.door())

@@ -26,6 +26,9 @@ var node: Sprite2D
 var progress := 0.0
 var done := false  ## efeito já aplicado (vira true uma vez só, em main.gd)
 var cooldown := 0.0  ## torre: segundos até a próxima flecha
+var archer: AnimatedSprite2D  ## torre: o arqueiro lá em cima
+var aim: Player  ## torre: alvo do tiro em andamento
+var release := -1.0  ## torre: segundos até a flecha sair (< 0 = sem tiro)
 
 
 func _init(k: StringName, p: Vector2, s: Vector2, n: Sprite2D) -> void:

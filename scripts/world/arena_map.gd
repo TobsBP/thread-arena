@@ -118,6 +118,12 @@ const BUILD_TEX := {
 	&"barracks": [preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Buildings/Blue Buildings/Barracks.png"), null],
 }
 const BUILD_GHOST_TINT := Color(0.6, 0.6, 0.6, 0.55)
+## Arqueiro no alto da torre; Tower_Front.png são as ameias desenhadas por cima dele.
+const TOWER_ARCHER_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Archer/Archer_Idle.png")
+const TOWER_ARCHER_SHOOT := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Archer/Archer_Shoot.png")
+const TOWER_FRONT := preload("res://assets/Thread Arena/Tower_Front.png")
+const TOWER_ARCHER_FEET := 118.0  ## linha do piso de madeira, de cima do quadro da torre
+const ARCHER_SHOOT_FPS := 12.0
 
 const BUSHES := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Decorations/Bushes/Bushe1.png"),
@@ -546,6 +552,44 @@ func place_building(kind: StringName, pos: Vector2) -> Sprite2D:
 		node.modulate = BUILD_GHOST_TINT
 	add_blocker(base_rect(pos, done.get_size()))
 	return node
+
+
+## Põe o arqueiro no alto da torre, com as ameias da frente por cima.
+func add_tower_archer(node: Sprite2D) -> AnimatedSprite2D:
+	var frames := SpriteFrames.new()
+	frames.remove_animation("default")
+	for anim: Array in [["idle", TOWER_ARCHER_IDLE, 6, 8.0, true],
+			["shoot", TOWER_ARCHER_SHOOT, 8, ARCHER_SHOOT_FPS, false]]:
+		frames.add_animation(anim[0])
+		frames.set_animation_speed(anim[0], anim[3])
+		frames.set_animation_loop(anim[0], anim[4])
+		var tex: Texture2D = anim[1]
+		var fw := tex.get_width() / int(anim[2])
+		for f in int(anim[2]):
+			var atlas := AtlasTexture.new()
+			atlas.atlas = tex
+			atlas.region = Rect2i(f * fw, 0, fw, tex.get_height())
+			frames.add_frame(anim[0], atlas)
+	var archer := AnimatedSprite2D.new()
+	archer.sprite_frames = frames
+	var height := node.texture.get_height()
+	archer.position = Vector2(node.texture.get_width() * 0.5, -height + TOWER_ARCHER_FEET - 32.0)
+	archer.animation_finished.connect(func() -> void: archer.play("idle"))
+	node.add_child(archer)
+	archer.play("idle")
+	var front := Sprite2D.new()
+	front.texture = TOWER_FRONT
+	front.centered = false
+	front.offset = Vector2(0, -height)
+	node.add_child(front)
+	return archer
+
+
+## O arqueiro vira pro alvo e toca o tiro.
+func tower_shoot(archer: AnimatedSprite2D, target: Vector2) -> void:
+	archer.flip_h = target.x < archer.global_position.x
+	archer.play("shoot")
+	archer.frame = 0
 
 
 func finish_building(node: Sprite2D, kind: StringName) -> void:

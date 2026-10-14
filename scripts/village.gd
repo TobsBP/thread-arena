@@ -10,13 +10,13 @@ enum Slot { MINE, DEPOT, FIRE }
 const MINE_SLOTS := 2
 const DEPOT_SLOTS := 2  ## quantos cabem dentro do armazém descarregando ao mesmo tempo
 ## Quanto rende uma viagem de aldeão, por Res (lenha, ouro, carne)
-const LOAD: Array[float] = [3.0, 2.0, 1.0]
+const LOAD: Array[float] = [3.0, 4.0, 1.0]
 const FIRE_SLOTS := 1  ## um espeto só: semáforo binário
 const FIRE_BURN_TIME := 25.0  ## segundos de fogo por lenha
 const SITE_REACH := 90.0  ## perto o bastante do armazém/mina/fogueira pra parar
 const EPS := 0.001  ## a carga entra em fatias (float): 1.0 pode chegar como 0.9999
 ## Janela entre ler e escrever o total, em iterações de trabalho falso.
-const COUNT_WORK := 6000
+const COUNT_WORK := 24000
 
 ## Pontos fixos, escritos uma vez por main.gd antes de qualquer Thread existir e só lidos depois.
 var depot := Vector2.ZERO
@@ -35,6 +35,7 @@ var fire_rate := 1.0
 var wood := 0.0
 var gold := 0.0
 var meat := 0.0  ## carne crua esperando o espeto
+var gold_in := 0.0  ## todo ouro já registrado no armazém
 var counted := 0.0  ## total que o armazém registrou — compare com a soma de Player.delivered
 var fire_fuel := 0.0  ## segundos de fogo restantes; <= 0 = apagada
 var roasts := 0  ## assadas na mesa: espelho da contagem de roast_ready, que não dá pra ler
@@ -150,6 +151,8 @@ func deposit(kind: int, amount: float) -> void:
 		acc += sqrt(float(k))
 	_set_stock(kind, seen + amount)
 	counted = seen_total + amount
+	if kind == Res.GOLD:
+		gold_in += amount
 	if locked:
 		_lock.unlock()
 

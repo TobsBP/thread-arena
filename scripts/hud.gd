@@ -296,6 +296,8 @@ func _draw_village() -> void:
 		["entregue %.1f   contado %.1f" % [v.delivered, v.counted], INK],
 		["perdido %.1f%s" % [lost, _lost_note(mutex_on, v.threads, lost)],
 				Color(BAD) if lost > 0.05 else INK_SOFT],
+		["ARSENAL nível %d  —  próximo: %d de ouro   [P]" % [v.arsenal, v.arsenal_cost], INK],
+		["preços: +%d%% (sobem a cada level)" % roundi((v.inflation - 1.0) * 100.0), INK_SOFT],
 		["", INK],
 		["SEMÁFOROS (filas): %s   [V]" % ("LIGADOS" if v.semaphores else "DESLIGADOS"),
 				Color(GOOD) if v.semaphores else Color(BAD)],
