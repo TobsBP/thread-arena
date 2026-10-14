@@ -203,8 +203,9 @@ abre o `CastleMenu`. Ao escolher uma construção, quem abriu o menu entra em
 `Player.build_mode`: o ataque/2º botão viram `build_confirm`/`build_cancel` e
 o fantasma segue à frente dele. A obra nasce em `_update_placement()`
 (`ArenaMap.place_building`, que já soma o blocker e marca o `nav`) e termina em
-`_update_build_sites()`, as duas **antes do dispatch**. A Torre pronta atira
-`Arrow` comum (o dano sai do `_resolve_arrow_hits()`). O `[T]`
+`_update_build_sites()`, as duas **antes do dispatch**. A Torre pronta ganha um
+arqueiro no alto (`ArenaMap.add_tower_archer`) que atira `Arrow` comum (o dano
+sai do `_resolve_arrow_hits()`). O `[T]`
 abre de qualquer lugar: quem "abriu" (e posiciona a obra) é quem está na
 porta do castelo ou, sem ninguém lá, o primeiro player vivo fora do bot.
 

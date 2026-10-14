@@ -68,6 +68,8 @@ const CASTLE_REACH := 140.0
 const BUILD_AHEAD := 60.0  ## folga entre o pé do player e a base da obra
 const TOWER_RANGE := 420.0
 const TOWER_COOLDOWN := 1.4  ## segundos entre flechas da torre
+## Quadro do Archer_Shoot em que a flecha sai do arco.
+const TOWER_RELEASE_FRAME := 5.0
 const BARRACKS_HP := 15.0  ## vida máxima a mais por Quartel pronto...
 const BARRACKS_MAX := 3  ## ...até este tanto de quartéis
 ## "black": 4ª skin da tela de seleção — Lanceiro (golpe de lança + guarda
@@ -2098,16 +2100,31 @@ func _update_build_sites(delta: float) -> void:
 		if site.kind != &"tower":
 			continue
 		site.cooldown -= delta
+		if site.release >= 0.0:
+			# A flecha sai quando ele solta a corda.
+			site.release -= delta
+			if site.release < 0.0:
+				var aim := site.aim if site.aim != null and not site.aim.is_dead() \
+						else _nearest_enemy(site.top(), TOWER_RANGE)
+				if aim != null:
+					var side := -1.0 if site.archer.flip_h else 1.0
+					arrows.append(Arrow.new(site.archer.global_position + Vector2(22.0 * side, -6.0),
+							aim.pos, Arrow.Mode.SHOT))
+			continue
 		if site.cooldown > 0.0:
 			continue
 		var target := _nearest_enemy(site.top(), TOWER_RANGE)
 		if target != null:
-			arrows.append(Arrow.new(site.top(), target.pos, Arrow.Mode.SHOT))
+			site.aim = target
+			site.release = TOWER_RELEASE_FRAME / ArenaMap.ARCHER_SHOOT_FPS
 			site.cooldown = TOWER_COOLDOWN
+			map.tower_shoot(site.archer, target.pos)
 
 
 func _on_building_done(site: BuildSite) -> void:
 	kingdom.on_built(site.kind)
+	if site.kind == &"tower":
+		site.archer = map.add_tower_archer(site.node)
 	match site.kind:
 		&"castle":
 			map.castle_spots.append(site.door())
