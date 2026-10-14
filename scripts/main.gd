@@ -704,6 +704,10 @@ func _apply_cli() -> void:
 			_auto_quit = true
 		elif arg.begins_with("--cura="):
 			heal_mode = clampi(arg.trim_prefix("--cura=").to_int(), 0, HealMode.size() - 1) as HealMode
+		elif arg == "--no-mobs":
+			_toggle_no_mobs()
+		elif arg.begins_with("--seed="):
+			seed(arg.trim_prefix("--seed=").to_int())
 		elif arg.begins_with("--timescale="):
 			Engine.time_scale = arg.trim_prefix("--timescale=").to_float()
 		elif arg.begins_with("--max-time="):
