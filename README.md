@@ -15,6 +15,8 @@ jogo volta pra seleção de personagem).
 | Tecla | Ação |
 |-------|------|
 | `ESPAÇO` | alterna SERIAL ↔ THREADS |
+| `C` | alterna a estratégia de entrega da carne |
+| `X` | alterna Mutex ON ↔ OFF (demonstração de disputa) |
 | `H` | menos informação no HUD (cicla 3 níveis) |
 | `G` | invoca um goblin avulso, tipo aleatório |
 | `T` | perto do castelo azul: abre o menu do castelo (pausa o jogo) |
@@ -42,11 +44,18 @@ modo threads, `main.gd` cria e destrói 1 `Thread` por unidade a cada frame e
 o FPS se mantém — a diferença aumenta conforme mais goblins entram em campo
 (cada um é mais uma Thread).
 
-Cada unidade escreve só nos próprios campos (`Player.step()`), então não há
-lock: é o caso fácil de paralelismo (dados particionados, sem estado
-compartilhado). O que toca duas unidades ao mesmo tempo — dano, colisão,
-spawn/remoção de goblin — roda na main thread, depois de todas as Threads
-terminarem.
+Cada unidade escreve só nos próprios campos (`Player.step()`), então esse passo
+não precisa de lock: é paralelismo com dados particionados. A entrega de carne
+mostra o caso diferente: vários entregadores disputam a reserva de um mesmo
+drop. Com `X` ligado, um `Mutex` protege a verificação e reserva; desligado, a
+demo simula uma corrida lógica reproduzível que pode duplicar a entrega. O modo
+sem Mutex usa um snapshot compartilhado e aplica o conflito depois da barreira,
+evitando uma data race real e imprevisível na memória do jogo.
+
+Os pawns agora levam a carne que cai das ovelhas até players feridos. `C`
+alterna entre três políticas: o player ferido mais perto, o de menor vida
+proporcional e rodízio entre os feridos. O HUD mostra a política ativa, o estado
+do Mutex, disputas e entregas duplicadas.
 
 ### Levels
 

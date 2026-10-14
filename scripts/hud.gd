@@ -107,6 +107,10 @@ func update_stats(
 	frame_t0: int,
 	level: int,
 	no_mobs: bool,
+	delivery_strategy: String,
+	mutex_enabled: bool,
+	contested_claims: int,
+	duplicate_deliveries: int,
 ) -> void:
 	_use_threads = use_threads
 	_ms = ms
@@ -122,7 +126,10 @@ func update_stats(
 		"[color=%s][font_size=13]%s[/font_size][/color]" % [DIM, _system_line()],
 		"",
 		_verdict(),
-		"[color=%s][ESPAÇO] modo  [B] bots  [H] info  [T] castelo  [M] mobs[/color]" % DIM,
+		"[font_size=13][b]ENTREGA %s[/b]   Mutex %s   disputas %d   duplicadas %d[/font_size]" % [
+			delivery_strategy, "ON" if mutex_enabled else "OFF", contested_claims,
+			duplicate_deliveries],
+		"[color=%s][ESPAÇO] threads  [C] estratégia  [X] Mutex  [B] bots  [H] info  [T] castelo  [M] mobs[/color]" % DIM,
 	])
 	queue_redraw()
 

@@ -1,7 +1,7 @@
 # Thread Arena — Apresentação
 
 Demo educacional em **Godot 4.7 / GDScript** que roda a **mesma simulação** de
-dois jeitos — serial (tudo na main thread) e paralelo (`WorkerThreadPool`) —
+dois jeitos — serial (tudo na main thread) e paralelo (uma `Thread` por unidade) —
 alternando em tempo real com `[ESPAÇO]` e mostrando o custo dos dois modos lado
 a lado na tela.
 
@@ -107,7 +107,9 @@ Riscos associados:
   threads passam mais tempo esperando do que trabalhando;
 - **starvation** — uma thread nunca consegue o lock.
 
-**A demo não usa nenhum `Mutex`** — e isso não é sorte, é design (seção 2a).
+O passo das unidades não usa `Mutex`, porque cada tarefa escreve em uma
+unidade diferente. A reserva de carne usa `Mutex`, pois vários entregadores
+podem tentar reservar o mesmo drop; `[X]` alterna essa proteção.
 
 ### Thread pool e o padrão fork-join
 
@@ -116,18 +118,19 @@ scheduler etc. Criar 3 por frame, 100 vezes por segundo, seria absurdo.
 
 Um **thread pool** resolve isso: as threads são criadas **uma vez** na
 inicialização e ficam **dormindo**; despachar trabalho é só acordar uma delas.
-É exatamente o que o `WorkerThreadPool` do Godot é.
+O Godot oferece `WorkerThreadPool`, mas esta demo usa `Thread.new()` explícito
+para deixar a criação, o início e a espera visíveis no código.
 
 O padrão de uso aqui é o **fork-join**:
 
 ```
-        ┌─ tarefa 0 ─┐
+		┌─ tarefa 0 ─┐
 main ───┼─ tarefa 1 ─┼─── barreira ─── main continua
  fork   └─ tarefa 2 ─┘      join
 ```
 
-- **fork** — `add_group_task()` divide o trabalho em N tarefas;
-- **join / barreira** — `wait_for_group_task_completion()` bloqueia a main
+- **fork** — a demo chama `Thread.start()` para cada unidade ou entregador;
+- **join / barreira** — `wait_to_finish()` bloqueia a main
   thread até **todas** terminarem.
 
 A barreira é o que devolve o programa a um ponto **determinístico**: depois
@@ -193,7 +196,7 @@ roda um laço:
 
 ```
 repete pra sempre:
-    lê input  →  atualiza o mundo  →  desenha  →  apresenta o frame
+	lê input  →  atualiza o mundo  →  desenha  →  apresenta o frame
 ```
 
 Esse laço roda na **main thread**, e ele tem um **orçamento de tempo**: pra
@@ -216,6 +219,8 @@ mais tarde vira a explicação do resultado (seção 3).
 | Tecla | Ação |
 |-------|------|
 | `ESPAÇO` | alterna **SERIAL ↔ THREADS** |
+| `C` | alterna a política de entrega de carne |
+| `X` | alterna `Mutex` ON/OFF para demonstrar disputa |
 | `H` | cicla o nível de detalhe do HUD (tudo → só números → nada) |
 
 Teclado e analógico **somam** no mesmo player, então dá pra jogar com teclado,
@@ -234,9 +239,9 @@ O HUD ([scripts/hud.gd](scripts/hud.gd)) tem três blocos:
    real de início e fim da tarefa daquele player. É a **visualização direta do
    conceito de paralelismo**:
    - modo **serial** → barras em **escada** (P1 termina, P2 começa…): é a
-     definição de execução sequencial, desenhada;
+	 definição de execução sequencial, desenhada;
    - modo **threads** → barras **empilhadas no mesmo x**, começando juntas: as
-     três ocupam o *mesmo intervalo de tempo*, que é a definição de paralelismo.
+	 três ocupam o *mesmo intervalo de tempo*, que é a definição de paralelismo.
 
    A régua tem escala fixa no pior modo já medido, então serial enche a barra e
    threads ocupa só uma fração dela. A barra mais comprida do modo paralelo é o
@@ -245,6 +250,10 @@ O HUD ([scripts/hud.gd](scripts/hud.gd)) tem três blocos:
 3. **Histórico por player** — os últimos 90 frames de cada player. Ao apertar
    `[ESPAÇO]` o degrau aparece nos três gráficos ao mesmo tempo, o que mostra
    que a mudança é **global** (o modo de execução), não um player específico.
+
+Os pawns entregadores recolhem a carne que cai das ovelhas e levam aos players
+feridos. O HUD também exibe a política ativa, disputas por drop e cargas
+duplicadas quando o Mutex está desligado.
 
 ### Por que 3 players e não 256 agentes
 
@@ -263,186 +272,47 @@ demonstrar o mundo real.
 
 ## 2. Threads em código
 
-### O padrão: `add_group_task`
+### Passo das unidades: serial ou uma `Thread` por unidade
 
-O núcleo da demo são estas 8 linhas em
-[scripts/main.gd:43-57](scripts/main.gd#L43-L57):
+Em [`main.gd`](scripts/main.gd), o modo serial percorre `units` e chama
+`_step_player()` em sequência. O modo threads cria uma `Thread` por unidade,
+inicia cada uma com `start()` e chama `wait_to_finish()` para todas antes de
+resolver ataques e colisões. Esse join é a barreira: a simulação só continua
+quando todos os passos terminaram.
 
-```gdscript
-func _process(delta: float) -> void:
-	var bounds := get_viewport_rect().size
-	for p in players:
-		p.poll_input()  # main thread: Input não é thread-safe
+Os dois modos chamam a mesma função e fazem o mesmo trabalho. A comparação muda
+quem executa os passos, não o algoritmo de movimento.
 
-	_frame_t0 = Time.get_ticks_usec()
-	if use_threads:
-		var task := WorkerThreadPool.add_group_task(
-			_step_player.bind(delta, bounds), players.size(), -1, true
-		)
-		WorkerThreadPool.wait_for_group_task_completion(task)
-	else:
-		for i in players.size():
-			_step_player(i, delta, bounds)
-```
+### Reserva da carne: a seção crítica do `Mutex`
 
-Os dois ramos chamam **exatamente a mesma função**
-([`_step_player`](scripts/main.gd#L67)) com os mesmos argumentos. A única
-diferença é *quem* chama: um `for` na main thread, ou o pool distribuindo os
-índices pelas threads. Isso é o que torna a comparação honesta — não existe
-"versão otimizada para threads", só uma mudança de **quem executa**.
+Os entregadores também tentam reservar drops em tarefas paralelas. Com `[X]
+Mutex ON`, `_claim_meat()` protege com `meat_mutex.lock()` e `unlock()` a
+checagem de `MeatDrop.claimed` e a reserva. Se outro entregador já reservou
+aquele drop, a tarefa tenta o próximo. O lock cobre só essa decisão; a viagem e
+a cura rodam fora dele, na main thread.
 
-Os argumentos de `add_group_task(action, elements, tasks_needed, high_priority)`:
+Com o Mutex OFF, as tarefas leem o mesmo snapshot antes de publicar as reservas.
+O jogo aplica as propostas depois do join, então dois entregadores podem levar
+a mesma carne. É uma corrida lógica intencional, repetível e segura para a demo;
+não é uma data race real na memória do jogo. O HUD conta disputas e duplicações.
 
-| Argumento | Valor | Conceito |
-|---|---|---|
-| `action` | `_step_player.bind(delta, bounds)` | o `Callable` que recebe o **índice** do elemento; `.bind()` fixa os parâmetros extras |
-| `elements` | `players.size()` = 3 | quantos itens processar — o pool chama `_step_player(0)`, `(1)`, `(2)` |
-| `tasks_needed` | `-1` | "decida você" — o pool usa no máximo min(núcleos, elementos) = **3** |
-| `high_priority` | `true` | fila de alta prioridade: trabalho que **precisa** caber no frame |
+`[C]` alterna três políticas de escalonamento: entregar ao ferido mais próximo,
+priorizar a menor porcentagem de vida ou alternar entre os feridos em rodízio.
+Isso escolhe quem recebe cada carga; multitarefa e sincronismo são conceitos
+separados, demonstrados pelas tarefas paralelas e pelo `Mutex`.
 
-`wait_for_group_task_completion()` é a **barreira** do fork-join: a main thread
-bloqueia até o último player terminar. É o que garante que o `_draw()` do frame
-veja os três já atualizados — sem ela, o jogo desenharia um estado
-**parcialmente atualizado**, com um player já movido e outro não.
+### O que fica em cada thread
 
-### Por que `WorkerThreadPool` e não `Thread.new()`
+`Input`, a IA, o movimento dos entregadores, a cura, as colisões e a árvore de
+cena continuam na main thread. Cada tarefa paralela de unidade só chama
+`Player.step()` para a sua própria unidade. A tarefa de reserva da carne só
+escolhe um drop; com o Mutex ON, só ela altera `claimed` enquanto segura o lock.
+As tarefas devolvem seus resultados e a main thread atualiza o mundo depois do
+join.
 
-Godot oferece as duas coisas. A demo usa o pool de propósito, e a justificativa
-é conceitual:
-
-| | `Thread.new()` manual | `WorkerThreadPool` |
-|---|---|---|
-| Criação | uma thread nova por uso — **caro** | threads criadas uma vez, reutilizadas |
-| A 100 FPS | 300 threads criadas/destruídas por segundo | zero criação: só acorda quem dorme |
-| Nº de threads | você decide (e erra) | dimensionado pelos núcleos da máquina |
-| Oversubscription | fácil criar mais threads que núcleos → só context switch | evitada por construção |
-| Balanceamento | manual | o pool distribui os índices |
-
-**Oversubscription** é o erro clássico: criar 100 threads num CPU de 8 núcleos
-não faz 100 coisas ao mesmo tempo — faz 8, com o SO gastando tempo revezando as
-outras 92. Mais threads que núcleos **não** é mais paralelismo; é mais
-concorrência (e mais overhead).
-
-### As 4 regras de segurança que o código segue
-
-Threads em jogo dão errado por motivos previsíveis. A demo respeita quatro
-regras, e cada uma está marcada com comentário no código:
-
-**a) Cada tarefa escreve só no próprio índice → nenhum lock.**
-
-```gdscript
-## Roda na thread do player i: escreve só em players[i].
-func _step_player(i: int, delta: float, bounds: Vector2) -> void:
-	players[i].step(delta, WORK_LOAD, bounds)
-```
-
-`players[i]` é exclusivo da tarefa `i`. Como **duas threads nunca escrevem no
-mesmo endereço**, não existe data race — e portanto **`Mutex` é desnecessário**.
-
-Esse é o padrão que se chama **particionamento de dados** (*data partitioning*)
-ou paralelismo **embaraçosamente paralelo** (*embarrassingly parallel*): o
-problema se divide em pedaços independentes, sem estado compartilhado. É o caso
-fácil, e é o que se deve procurar antes de sair colocando lock.
-
-O contraste vale a pena: se houvesse um **placar global** `total += p.heat`,
-teríamos:
-
-- **data race** — `+=` é ler-modificar-escrever, três operações não atômicas;
-- ao proteger com `Mutex`, uma **seção crítica** que serializa as 3 threads —
-  parte do ganho evapora, e isso apareceria no próprio gráfico da demo;
-- e um efeito sutil: soma de `float` **não é associativa**, então o resultado
-  mudaria conforme a ordem de chegada das threads. Ou seja, **não-determinismo**
-  mesmo com o lock correto — uma *race condition* sem *data race*.
-
-**b) `Input` só na main thread.**
-
-A classe `Input` do Godot **não é thread-safe** (thread-safe = pode ser chamada
-de várias threads sem corromper estado interno). Por isso todos os players fazem
-[`poll_input()`](scripts/player.gd#L29) **antes** do dispatch, guardando o
-resultado num campo simples:
-
-```gdscript
-var input := Vector2.ZERO  ## escrito na main thread, lido na thread do player
-```
-
-Esse é o padrão **snapshot** (ou *double buffering* de input): em vez de
-sincronizar o acesso a um recurso compartilhado, você **copia o valor antes** e
-as threads leem uma foto imutável.
-
-Repare no fluxo: a main thread **escreve** `input` → barreira do fork → a worker
-**lê** `input`. Escrita e leitura estão separadas pelo happens-before da
-sincronização (seção 0), então nem esse campo precisa de lock. Sem essa
-separação, seria data race.
-
-**c) Nada de árvore de cena dentro da tarefa.**
-
-`Player` é `RefCounted`, **não** `Node`. É **dado puro**: posição, cor, input,
-timestamps. Nenhuma tarefa cria nó, muda propriedade de nó ou chama
-`queue_redraw()`.
-
-O motivo é conceitual: a **SceneTree é um estado global mutável e não
-thread-safe**. Mexer nela de uma worker pode corromper a estrutura interna da
-engine — que é o pior tipo de bug, porque o crash acontece longe da causa.
-
-A separação usada aqui é **simulação (paralela) / apresentação (serial)**: as
-threads só transformam dados; desenhar é sempre na main thread, depois da
-barreira:
-
-```gdscript
-func _draw() -> void:
-	for p in players:
-		draw_circle(p.pos, RADIUS, p.color)
-```
-
-> Nota: em Godot 4 o contador de referências do `RefCounted` é **atômico**,
-> então passar o objeto entre threads não corrompe o refcount. Isso protege o
-> *ciclo de vida* do objeto — **não** os campos dele. A segurança dos campos vem
-> da regra (a).
-
-**d) Quem mede é o main; o HUD só formata.**
-
-Os timestamps saem de dentro da própria tarefa
-([scripts/player.gd:44-51](scripts/player.gd#L44-L51)):
-
-```gdscript
-func step(delta: float, work_load: int, bounds: Vector2) -> void:
-	t_start = Time.get_ticks_usec()
-	var acc := 0.0
-	for k in work_load:
-		acc += sqrt(float(k) + pos.x)
-	heat = fmod(acc, 1.0)
-	pos = (pos + input * SPEED * delta).clamp(Vector2.ZERO, bounds)
-	t_end = Time.get_ticks_usec()
-```
-
-O `heat` guarda o resultado do loop — sem ele o cálculo seria trabalho jogado
-fora, e num ambiente otimizador poderia até ser eliminado como **código morto**.
-
-E o tempo do frame é o **span** — do dispatch até o **último** player terminar,
-não a soma nem a média:
-
-```gdscript
-func _span_usec() -> int:
-	var last := _frame_t0
-	for p in players:
-		last = maxi(last, p.t_end)
-	return last - _frame_t0
-```
-
-O `max` não é detalhe de implementação, é o conceito: num grupo paralelo com
-barreira, **o custo é o do mais lento**, porque todo mundo espera por ele. Usar
-a média esconderia exatamente o fenômeno que a seção 3 explica.
-
-### Determinismo: os dois modos dão o mesmo resultado?
-
-Sim — e isso é uma propriedade que se conquista, não um acaso. Como cada tarefa
-só lê dados imutáveis durante o frame (`delta`, `bounds`, `input`) e só escreve
-no próprio `Player`, **a ordem de execução não afeta o resultado**. Rodar em
-qualquer ordem, ou todos juntos, produz o mesmo estado final.
-
-Isso é o que torna a comparação válida: os dois modos fazem **o mesmo trabalho e
-chegam ao mesmo lugar**; só o *tempo* muda. Uma versão paralela que produzisse
-resultado diferente não estaria sendo comparada — estaria sendo trocada.
+A comparação principal segue sendo serial × threads para o passo de combate.
+O Mutex demonstra um problema diferente: proteger um recurso compartilhado
+quando várias tarefas disputam a mesma carne.
 
 ### Detalhe de medição: vsync desligado
 
@@ -485,7 +355,7 @@ thread. É a definição de execução sequencial — o tempo total é a **soma*
 
 ```
 SERIAL   [--- P1 2,46ms ---][--- P2 2,46ms ---][--- P3 2,46ms ---]
-         0                                                     7,39 ms
+		 0                                                     7,39 ms
 ```
 
 Cada `step()` roda 40.000 iterações de `sqrt` **em GDScript interpretado** — é
@@ -509,9 +379,9 @@ Quatro motivos, do maior pro menor:
 
 ```
 THREADS  [dispatch][--- P1 ---]
-                   [--- P2 ---]
-                   [------ P3 ------]       ← o span é o MAIOR, não a média
-         0                            4,27 ms
+				   [--- P2 ---]
+				   [------ P3 ------]       ← o span é o MAIOR, não a média
+		 0                            4,27 ms
 ```
 
 **1. Desbalanceamento de carga: quem manda é o retardatário (*straggler*).**
@@ -521,19 +391,17 @@ levou 4,2 ms — o tempo ocioso das duas primeiras é **desperdício puro**, e �
 que derruba a eficiência de 100% para 58%. Em paralelismo com barreira, o custo
 é sempre o do mais lento.
 
-**2. Granularidade grossa: só existem 3 tarefas.**
-A máquina tem 8 núcleos / 16 threads lógicas, mas o pool não tem como usar mais
-do que 3, porque `elements = players.size() = 3`. O **teto de speedup é 3x**,
-não 8x — e com poucas tarefas o pool não tem como reequilibrar (com 256 tarefas,
-uma thread que terminasse cedo pegaria a próxima da fila; com 3, ela só espera).
+**2. Granularidade: uma tarefa para cada unidade viva.**
+O número de tarefas acompanha `units.size()` — players e inimigos —, não o
+número de núcleos. No início de cada onda há mais trabalho disponível; unidades
+mortas removidas e inimigos de novas ondas mudam essa quantidade.
 
 **3. Overhead fixo de dispatch e sincronização.**
-`add_group_task` precisa acordar threads que estavam dormindo, enfileirar as
-tarefas e criar o `Callable` bindado; `wait_for_group_task_completion` bloqueia
-a main thread e depois a reacorda. Isso custa dezenas a centenas de
-microssegundos **por frame** — desprezível se cada tarefa durasse 100 ms,
-relevante quando ela dura 2,5 ms. É o **preço de coordenar**, e ele não some
-com mais núcleos: só é diluído por tarefas maiores.
+`Thread.new()` e `start()` criam e iniciam uma thread por unidade em cada frame;
+`wait_to_finish()` bloqueia a main thread até todas terminarem. Esse é o
+**preço de coordenar** e ele não some com mais núcleos: só é diluído por tarefas
+maiores. A atribuição de carne também cria tarefas paralelas quando há pawns
+livres e drops disponíveis.
 
 **4. O hardware não escala linearmente.**
 Uma thread sozinha num Ryzen 4800HS roda em **boost clock** mais alto do que
@@ -556,9 +424,9 @@ Esta é a parte mais instrutiva, e o nome dela é **Lei de Amdahl**: *o speedup
 total é limitado pela fração que você não paralelizou.*
 
 ```
-             1                    p = fração paralelizável
+			 1                    p = fração paralelizável
 S = ─────────────────────         N = número de threads
-      (1 − p) + p / N             (1 − p) = a parte serial, o teto
+	  (1 − p) + p / N             (1 − p) = a parte serial, o teto
 ```
 
 O frame não é só a simulação. Descontando o trecho medido:
@@ -644,15 +512,15 @@ para equilibrar.
 | **Paralelismo** | Várias tarefas *executando* no mesmo instante; precisa de vários núcleos | seção 0 |
 | **Latência** | Tempo de *um* frame (o `ms` do HUD) | HUD |
 | **Throughput** | Frames por segundo (o FPS) | HUD |
-| **Data race** | Dois acessos ao mesmo endereço, um sendo escrita, sem sincronização → indefinido | regra (a) |
-| **Race condition** | O resultado depende da ordem de execução das threads | regra (a) |
-| **Seção crítica** | Trecho que só uma thread pode executar por vez | contraexemplo (a) |
-| **Mutex** | Primitiva que garante exclusão mútua; serializa e entra em Amdahl | contraexemplo (a) |
+| **Data race** | Dois acessos concorrentes ao mesmo endereço, um sendo escrita, sem sincronização → indefinido | seção crítica |
+| **Race condition** | O resultado depende da ordem de execução das threads | Mutex OFF (simulada) |
+| **Seção crítica** | Trecho que só uma thread pode executar por vez | reserva de carne |
+| **Mutex** | Primitiva que protege a reserva compartilhada de carne | `main.gd` |
 | **Deadlock** | Threads esperando umas pelas outras em ciclo; nada progride | seção 0 |
 | **Contenção** | Threads disputando o mesmo lock, esperando mais do que trabalhando | seção 0 |
-| **Thread pool** | Threads criadas uma vez e reutilizadas — `WorkerThreadPool` | `main.gd` |
-| **Fork-join** | Dividir em N tarefas e esperar todas numa barreira | `_process()` |
-| **Barreira** | Ponto onde todas as threads precisam chegar — `wait_for_group_task_completion` | `main.gd:54` |
+| **Thread pool** | Threads criadas uma vez e reutilizadas — conceito do Godot; esta demo usa `Thread.new()` | conceito |
+| **Fork-join** | Dividir em tarefas e esperar todas numa barreira | `_process()` |
+| **Barreira** | Ponto onde a main thread aguarda `wait_to_finish()` | `main.gd` |
 | **Happens-before** | Garantia de que o que A escreveu está visível para B | regra (b) |
 | **Thread-safe** | Pode ser chamado de várias threads sem corromper estado — `Input` **não** é | regra (b) |
 | **Particionamento** | Dividir os dados em pedaços exclusivos → dispensa lock | regra (a) |
@@ -679,27 +547,28 @@ para equilibrar.
 
 ## Apêndice B — Perguntas frequentes
 
-**Por que não usar `Mutex` "por segurança"?**
+**Por que não usar `Mutex` "por segurança" em todo lugar?**
 Porque lock não é seguro por padrão — é **caro** por padrão. Ele cria uma seção
 crítica, e seção crítica é código serial, que entra direto na Lei de Amdahl.
-Aqui não há dado compartilhado sendo escrito, então o lock só custaria, sem
-proteger nada. A ordem certa é: primeiro tente **particionar**; só se não der,
-sincronize.
+No passo de cada unidade, não há dado compartilhado sendo escrito, então um
+lock só custaria. Já a reserva de carne compartilha `MeatDrop.claimed`, então
+usa `Mutex` só nessa seção curta. A ordem certa é: primeiro tente
+**particionar**; sincronize os dados que realmente são compartilhados.
 
 **Threads sempre deixam o programa mais rápido?**
 Não. Se a carga por tarefa for menor que o custo de despachá-la, o paralelo
 perde (ponto de equilíbrio). Num CPU de 1 núcleo, perde sempre. E se a parte
 serial for grande, o ganho é limitado independentemente dos núcleos (Amdahl).
 
-**Por que 3 tarefas e não uma por núcleo?**
-Porque `elements = 3` — a divisão do trabalho segue o domínio (players), não o
-hardware. Isso é honesto: em jogo real você paraleliza pela estrutura do jogo,
-e o número de unidades raramente coincide com o número de núcleos.
+**Quantas threads o jogo cria?**
+No passo de combate, uma por unidade viva em cada frame. A reserva de carne
+cria uma por entregador livre quando há drops disponíveis. O sistema operacional
+decide em que núcleo e quando cada thread executa.
 
 **O modo paralelo pode dar resultado diferente do serial?**
-Nesta demo, não — por construção (particionamento + dados imutáveis durante o
-frame). Bastaria um acumulador compartilhado para introduzir não-determinismo,
-inclusive **com** o lock correto, porque soma de `float` não é associativa.
+O passo de combate produz o mesmo resultado porque cada tarefa escreve só na
+própria unidade. A comparação de Mutex é separada: com `X` desligado a demo
+simula de propósito uma reserva duplicada de carne.
 
 **Por que medir o `max` dos tempos e não a média?**
 Porque existe barreira: a main thread só continua quando a **última** terminar.

@@ -86,6 +86,9 @@ func _draw() -> void:
 
 	_draw_dust()
 	_draw_body(body)
+	if unit.is_courier and unit.carrying:
+		draw_texture_rect(MeatDrop.TEXTURE,
+				Rect2(body + Vector2(-12, -62), Vector2(24, 24)), false)
 	_draw_dead(body)
 	_draw_heal_fx(body)
 	_draw_block_fx(body)

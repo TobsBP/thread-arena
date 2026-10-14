@@ -32,12 +32,11 @@ const BOMBER_BLAST_RADIUS := 90.0  ## alcance do estouro do Goblin do Barril
 const CAM_SHAKE_HIT := 3.0  ## tremor da câmera num golpe normal
 const CAM_SHAKE_SPECIAL := 7.0  ## e num golpe especial/flecha — mais forte
 const CAM_SHAKE_DECAY := 10.0  ## por segundo
-## Caça: qualquer golpe mata a ovelha (sem HP nela) e larga carne, que cura
-## quem chegar perto — sem botão, é só encostar. SHEEP_RESPAWN_TIME é bem
-## maior que Player.DEATH_TIME pra não virar fonte infinita ali do lado.
+## Caça: qualquer golpe mata a ovelha (sem HP nela) e larga carne para os
+## entregadores. SHEEP_RESPAWN_TIME é bem maior que Player.DEATH_TIME pra não
+## virar fonte infinita ali do lado.
 const SHEEP_RESPAWN_TIME := 15.0
 const HEAL_AMOUNT := 30.0
-const MEAT_PICKUP_REACH := 50.0
 const ENEMY_COOLDOWN := 1.2  ## respiro entre golpes do inimigo, em segundos
 const ENEMY_SPEED := 170.0  ## mais lento que os players, senão não tem fuga
 ## P3/"yellow": Pawn (camponês) — mesma contagem de quadros do Warrior
@@ -87,8 +86,8 @@ const MONK_HEAL_AMOUNT := 30.0
 const MONK_AURA_RADIUS := 150.0  ## regen passivo pra quem fica perto, sem precisar de cura ativa
 const MONK_AURA_RATE := 4.0  ## hp por segundo
 
-## Pawns: dois azuis e dois amarelos indo do toco à base com madeira. Cenário
-## vivo, igual às ovelhas — main thread, fora de units/threads.
+## Pawns: dois azuis e dois amarelos entregam carne. Cenário vivo, igual às
+## ovelhas — movimento na main thread, fora de units/threads.
 const PAWN_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Idle.png")
 const PAWN_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run.png")
 const PAWN_WOOD := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run Wood.png")
@@ -139,6 +138,10 @@ const WAVE_BASE := 2  ## inimigos no level 1; sobe 1 por level
 const MAX_WAVE_ENEMIES := 8
 const MAX_LIVE_ENEMIES := 14  ## teto do [G]: onda + avulsos juntos
 const MIN_ENEMY_SPAWN_DIST := 260.0  ## nasce longe dos players, não em cima
+const COURIER_REACH := 44.0
+
+enum DeliveryStrategy { NEAREST, MOST_INJURED, ROUND_ROBIN }
+const DELIVERY_STRATEGY_NAMES := ["MAIS PERTO", "MENOS VIDA", "RODÍZIO"]
 
 @export var use_threads := false
 ## [M]: sem goblins — onda não nasce e [G] não invoca; o level segue subindo
@@ -149,13 +152,24 @@ var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes
 var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
 ## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
 var sheep: Array[Player] = []
-## Pawns lenhadores: cenário vivo, como as ovelhas.
+## Pawns entregadores: cenário vivo, como as ovelhas.
 var workers: Array[Player] = []
 ## Tudo que se esbarra: units + sheep + workers, montado uma vez no _ready().
 var bodies: Array[Player] = []
 var arrows: Array[Arrow] = []  ## flechas em voo; roda fora do esquema de Threads
 var dynamites: Array[Dynamite] = []  ## dinamites arremessadas pelo Goblin da Dinamite
 var meat_drops: Array[MeatDrop] = []  ## carne largada por ovelha morta, no chão
+## A reserva é o recurso compartilhado da demonstração. O lock protege somente
+## a operação curta de conferir e reservar a carne, nunca a viagem do pawn.
+var meat_mutex := Mutex.new()
+var mutex_enabled := true
+var delivery_strategy := DeliveryStrategy.NEAREST
+var contested_claims := 0
+var duplicate_deliveries := 0
+var _round_robin_cursor := 0
+var _courier_drop: Dictionary[Player, MeatDrop] = {}
+var _courier_target: Dictionary[Player, Player] = {}
+var _courier_duplicate: Dictionary[Player, bool] = {}
 var damage_numbers: Array[DamageNumber] = []  ## "-25"/"+30" flutuando
 var cam_shake := 0.0  ## magnitude do tremor de câmera; decai sozinho (ver _update_camera)
 var _frame_t0 := 0
@@ -477,11 +491,9 @@ func _spawn_sheep() -> void:
 		sheep.append(s)
 
 
-## Cada pawn puxa madeira de uma árvore pro castelo principal — os pontos vêm
-## do mapa, que é quem sabe onde as coisas caíram.
+## Os pawns começam junto ao castelo; _assign_courier_jobs escolhe o drop e o
+## player ferido para cada um.
 func _spawn_workers() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 4242
 	for i in PAWN_COUNT:
 		var blue := i % 2 == 0
 		var home: Vector2 = map.main_castle_spot
@@ -491,8 +503,7 @@ func _spawn_workers() -> void:
 				PAWN_AXE if blue else PAWN_AXE_Y, 8, 6, 6)
 		w.loaded_texture = PAWN_WOOD if blue else PAWN_WOOD_Y
 		w.speed = PAWN_SPEED
-		w.work_home = home
-		w.work_site = map.tree_spots[rng.randi() % map.tree_spots.size()]
+		w.is_courier = true
 		workers.append(w)
 
 
@@ -560,8 +571,9 @@ func _process(delta: float) -> void:
 		s.wander(delta)
 		s.step(delta, 0, PLAY_AREA, map.blockers)
 
+	_assign_courier_jobs()
 	for w in workers:
-		w.haul(delta)
+		_update_courier(w, delta)
 		w.step(delta, 0, PLAY_AREA, map.blockers)
 
 	_frame_t0 = Time.get_ticks_usec()
@@ -586,14 +598,15 @@ func _process(delta: float) -> void:
 	_resolve_monk_heals()
 	_resolve_monk_aura(delta)
 	_resolve_sheep_hits()
-	_resolve_meat_pickup()
 	_resolve_collisions()
 
 	# lerp: o FPS instantâneo do Godot oscila demais pra ler na tela.
 	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera(delta)
-	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level, no_mobs)
+	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level,
+			no_mobs, DELIVERY_STRATEGY_NAMES[delivery_strategy], mutex_enabled,
+			contested_claims, duplicate_deliveries)
 	side.update_panel(players, players.map(_player_hints), level, no_mobs, kingdom)
 	queue_redraw()  ## só as flechas usam _draw() agora (ver comentário lá)
 
@@ -601,6 +614,167 @@ func _process(delta: float) -> void:
 ## Roda na Thread da unidade i: escreve só em units[i].
 func _step_player(i: int, delta: float) -> void:
 	units[i].step(delta, WORK_LOAD, PLAY_AREA, map.blockers)
+
+
+## Procura trabalho em paralelo só quando há pawns livres. Cada tarefa devolve
+## um resultado; somente a thread principal aplica movimento e cura aos nós.
+func _assign_courier_jobs() -> void:
+	var idle: Array[Player] = []
+	for w in workers:
+		if not _courier_drop.has(w) and not w.carrying:
+			idle.append(w)
+	if idle.is_empty() or meat_drops.is_empty() or _injured_players().is_empty():
+		return
+
+	# Snapshot imutável para leitura pelas threads. Com mutex desligado, cada
+	# worker escolhe desse mesmo snapshot e pode "reservar" a mesma carne: é a
+	# corrida lógica reproduzível que a demo quer mostrar, sem data race em memória.
+	var candidates: Array[MeatDrop] = []
+	for drop in meat_drops:
+		if not drop.claimed:
+			candidates.append(drop)
+	if candidates.is_empty():
+		return
+
+	var results: Array = []
+	var threads: Array[Thread] = []
+	for w in idle:
+		var thread := Thread.new()
+		threads.append(thread)
+		thread.start(_claim_meat.bind(candidates))
+	for thread in threads:
+		results.append(thread.wait_to_finish())
+
+	var winners: Dictionary[MeatDrop, Array] = {}
+	for i in results.size():
+		var result: Dictionary = results[i]
+		var drop: MeatDrop = result.get("drop")
+		if mutex_enabled and result.get("contended", false):
+			contested_claims += 1
+		if drop == null:
+			continue
+		if not winners.has(drop):
+			winners[drop] = []
+		winners[drop].append(idle[i])
+
+	for drop in winners:
+		var claimants: Array = winners[drop]
+		drop.claimed = true
+		if claimants.size() > 1:
+			contested_claims += claimants.size() - 1
+		for i in claimants.size():
+			var w: Player = claimants[i]
+			_courier_drop[w] = drop
+			_courier_target[w] = _choose_delivery_target(w)
+			_courier_duplicate[w] = i > 0
+
+
+## Worker entry point. Com mutex, a checagem e a reserva são uma seção crítica;
+## sem mutex, cada tarefa lê o mesmo snapshot e devolve sua proposta.
+func _claim_meat(candidates: Array[MeatDrop]) -> Dictionary:
+	if mutex_enabled:
+		meat_mutex.lock()
+		var result := {"drop": null, "contended": false}
+		for drop in candidates:
+			if drop.claimed:
+				result["contended"] = true
+				continue
+			drop.claimed = true
+			result["drop"] = drop
+			break
+		meat_mutex.unlock()
+		return result
+	else:
+		# Deliberadamente não publica a reserva aqui: todas as tarefas leem a
+		# mesma fotografia anterior à disputa. O conflito é aplicado após o join.
+		if not candidates.is_empty():
+			return {"drop": candidates[0], "contended": false}
+	return {"drop": null, "contended": false}
+
+
+func _update_courier(worker: Player, delta: float) -> void:
+	if not _courier_drop.has(worker):
+		worker.input = Vector2.ZERO
+		worker.attack_pressed = false
+		return
+	var drop: MeatDrop = _courier_drop[worker]
+	if not worker.carrying and not _courier_duplicate.get(worker, false) \
+			and not meat_drops.has(drop):
+		_release_courier(worker)
+		return
+	var target: Player = _courier_target.get(worker)
+	if target == null or target.is_dead() or target.hp >= target.max_hp:
+		target = _choose_delivery_target(worker)
+		_courier_target[worker] = target
+	if target == null:
+		worker.input = Vector2.ZERO
+		return
+
+	var destination := target.pos if worker.carrying else drop.pos
+	var to_target := destination - worker.pos
+	if to_target.length() > COURIER_REACH:
+		worker.input = map.nav_dir(worker.pos + Player.FEET, destination + Player.FEET)
+		worker.facing_right = to_target.x >= 0.0
+		worker.attack_pressed = false
+		return
+
+	worker.input = Vector2.ZERO
+	worker.attack_pressed = true
+	if not worker.carrying:
+		var duplicate: bool = _courier_duplicate.get(worker, false)
+		if duplicate or meat_drops.has(drop):
+			worker.carrying = true
+			if duplicate:
+				duplicate_deliveries += 1
+			else:
+				meat_drops.erase(drop)
+		else:
+			_release_courier(worker)
+		return
+
+	# A entrega/cura é serializada na main thread, depois das tarefas de reserva.
+	var healed := minf(HEAL_AMOUNT, target.max_hp - target.hp)
+	target.hp += healed
+	target.heal_fx_time = 0.0
+	damage_numbers.append(DamageNumber.new(target.pos, healed, true))
+	worker.carrying = false
+	worker.loaded_texture = PAWN_WOOD if workers.find(worker) % 2 == 0 else PAWN_WOOD_Y
+	_release_courier(worker)
+
+
+func _release_courier(worker: Player) -> void:
+	worker.input = Vector2.ZERO
+	worker.attack_pressed = false
+	_courier_drop.erase(worker)
+	_courier_target.erase(worker)
+	_courier_duplicate.erase(worker)
+
+
+func _injured_players() -> Array[Player]:
+	var result: Array[Player] = []
+	for p in players:
+		if not p.is_dead() and p.hp < p.max_hp:
+			result.append(p)
+	return result
+
+
+func _choose_delivery_target(worker: Player) -> Player:
+	var injured := _injured_players()
+	if injured.is_empty():
+		return null
+	match delivery_strategy:
+		DeliveryStrategy.MOST_INJURED:
+			injured.sort_custom(func(a: Player, b: Player) -> bool:
+				return a.hp / a.max_hp < b.hp / b.max_hp)
+			return injured[0]
+		DeliveryStrategy.ROUND_ROBIN:
+			var target := injured[_round_robin_cursor % injured.size()]
+			_round_robin_cursor += 1
+			return target
+		_:
+			injured.sort_custom(func(a: Player, b: Player) -> bool:
+				return worker.pos.distance_squared_to(a.pos) < worker.pos.distance_squared_to(b.pos))
+			return injured[0]
 
 
 ## Dano e morte: mexe em dois objetos ao mesmo tempo, então roda na main
@@ -803,22 +977,6 @@ func _resolve_sheep_hits() -> void:
 				u.attack_hit = true
 				s.death_time = 0.0
 				meat_drops.append(MeatDrop.new(s.pos))
-				break
-
-
-## Cura ao encostar na carne — sem botão, só chegar perto. Roda depois da
-## barreira: mexe no hp do player de fora da Thread dele.
-func _resolve_meat_pickup() -> void:
-	for i in range(meat_drops.size() - 1, -1, -1):
-		var m := meat_drops[i]
-		for p in players:
-			if p.is_dead():
-				continue
-			if p.pos.distance_to(m.pos) < MEAT_PICKUP_REACH:
-				p.hp = minf(p.hp + HEAL_AMOUNT, p.max_hp)
-				p.heal_fx_time = 0.0  ## liga o efeito visual (ver UnitSprite._draw_heal_fx)
-				damage_numbers.append(DamageNumber.new(p.pos, HEAL_AMOUNT, true))
-				meat_drops.remove_at(i)
 				break
 
 
@@ -1127,6 +1285,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 	elif event.is_action_pressed("ui_accept"):
 		use_threads = not use_threads
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_C:
+		delivery_strategy = (delivery_strategy + 1) % DELIVERY_STRATEGY_NAMES.size()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_X:
+		mutex_enabled = not mutex_enabled
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_T:
 		_open_castle_menu()

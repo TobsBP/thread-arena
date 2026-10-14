@@ -11,8 +11,6 @@ const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
 const DEATH_TIME := 1.6  ## tombar + sumir (dá tempo do efeito de morte tocar)
 const HEAL_FX_DURATION := 1.1  ## dura o efeito de cura (Heal_Effect, 11 quadros a 10fps)
-const WORK_PAUSE := 2.2  ## pawn: segundos parado no serviço e na entrega
-const WORK_REACH := 60.0  ## perto o bastante do toco/da base pra parar
 const SPECIAL_HOLD_THRESHOLD := 0.5  ## segurar ataque por isso troca pro golpe especial
 const HIT_FLASH_DURATION := 0.15  ## pisca vermelho ao tomar dano
 const HIT_POP_DURATION := 0.2  ## "soco": dá um pulo de escala ao tomar dano
@@ -41,6 +39,7 @@ var is_enemy := false
 var is_bot := false  ## bot_think() no lugar de poll_input() — ligado por [B] em main.gd
 var is_archer := false  ## dispara Arrow de verdade (ver main.gd _fire_arrow)
 var is_sheep := false  ## morte mostra baforada em vez de caveira (ver UnitSprite)
+var is_courier := false  ## pawn de cenário que leva carne até players feridos
 var is_monk := false  ## "ataque" cura o aliado mais perto em vez de bater (ver main.gd)
 var is_thrower := false  ## inimigo à distância: "ataque" arremessa Dynamite em vez de bater (ver main.gd)
 var is_bomber := false  ## chega perto e explode em vez de bater (ver main.gd _resolve_bomber_blasts)
@@ -102,7 +101,7 @@ var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
 var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
 var attack_cooldown := 1.2  ## inimigo: respiro entre golpes — varia por tipo (ver EnemyTypes)
 var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
-var heal_fx_time := -1.0  ## >= 0 = tocando o efeito de cura (ver main.gd _resolve_meat_pickup)
+var heal_fx_time := -1.0  ## >= 0 = efeito de cura após carne/aura (ver main.gd)
 var hit_flash_time := -1.0  ## >= 0 = piscando vermelho (acabou de tomar dano)
 var hit_pop_time := -1.0  ## >= 0 = no meio do "soco" de escala do impacto
 var block_fx_time := -1.0  ## >= 0 = mostrando o escudo de bloqueio bem-sucedido
@@ -125,10 +124,6 @@ var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
 var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
-## Pawn: vai do serviço à base e volta, carregando a carga na ida de volta.
-var work_site := Vector2.ZERO
-var work_home := Vector2.ZERO
-var work_timer := 0.0
 var carrying := false
 var loaded_texture: Texture2D  ## sprite de corrida com a carga nas costas
 var loaded_idle_texture: Texture2D  ## sprite parado com a carga (null = usa idle normal)
@@ -205,27 +200,6 @@ func wander(delta: float) -> void:
 	if wander_time <= 0.0:
 		wander_time = randf_range(1.0, 3.0)
 		input = Vector2.ZERO if randf() < 0.35 else Vector2.RIGHT.rotated(randf() * TAU)
-
-
-## Pawn: anda até o serviço, martela um tempo, leva a carga pra base e volta.
-## Roda na main thread junto com o poll e só escreve `input`/`attack_pressed`
-## — a animação de trabalho é a de ataque, que já existe.
-func haul(delta: float) -> void:
-	if work_timer > 0.0:
-		work_timer -= delta
-		input = Vector2.ZERO
-		attack_pressed = not carrying  # machado no toco; na base só entrega
-		if work_timer <= 0.0:
-			carrying = not carrying
-		return
-	attack_pressed = false
-	var to_target := (work_home if carrying else work_site) - pos
-	if to_target.length() < WORK_REACH:
-		work_timer = WORK_PAUSE
-		input = Vector2.ZERO
-		return
-	input = to_target.normalized()
-	facing_right = to_target.x >= 0.0
 
 
 ## Main thread only: a classe Input não é thread-safe. Só lê o teclado/controle

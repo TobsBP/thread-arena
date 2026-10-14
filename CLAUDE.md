@@ -7,7 +7,8 @@ controles.
 ## Estrutura
 
 - `scenes/main.tscn` — cena principal (Node2D + instância do HUD)
-- `scripts/main.gd` — simulação, alternância serial/threads, medição e input
+- `scripts/main.gd` — simulação, alternância serial/threads, entrega de carne,
+  reserva Mutex, medição e input
 - `scenes/hud.tscn` / `scripts/hud.gd` — painel de números, o comparativo em
   barras e a timeline das tarefas, tudo desenhado em papel do pack; só
   apresenta, recebe tudo por `update_stats()`
@@ -159,12 +160,17 @@ o fantasma segue à frente dele. A obra nasce em `_update_placement()`
 `Arrow` comum (o dano sai do `_resolve_arrow_hits()`). Trabalhadores por
 profissão ainda são só número no `Kingdom`, não nascem no mapa.
 
-Ovelhas (`sheep`) e pawns lenhadores (`workers`) são cenário vivo: as ovelhas
-andam a esmo (`Player.wander()`) e os pawns vão do toco ao castelo principal
-com madeira nas costas (`Player.haul()`, com os pontos vindos de
-`ArenaMap.tree_spots`/`main_castle_spot`). Os dois rodam na main thread e ficam
+Ovelhas (`sheep`) e pawns entregadores (`workers`) são cenário vivo: as ovelhas
+andam a esmo (`Player.wander()`) e os pawns levam carne dos drops até players
+feridos. Os dois rodam na main thread para movimento/desenho e ficam
 fora de `units` — não entram na comparação serial/threads, só na colisão, via
 `bodies` (= `units` + `sheep` + `workers`).
+
+A atribuição de drops usa uma Thread por entregador livre. `Mutex` protege a
+checagem e reserva de `MeatDrop.claimed`; o movimento e a cura continuam na main
+thread. Com o toggle OFF, a demonstração usa um snapshot comum e aplica a
+duplicação depois do join, de forma reproduzível e sem data race real. `[C]`
+alterna política (perto, menor vida, rodízio) e `[X]` alterna o Mutex.
 
 ## Convenções
 
@@ -176,9 +182,9 @@ fora de `units` — não entram na comparação serial/threads, só na colisão,
 - Paralelismo com `Thread` explícita (`new`/`start`/`wait_to_finish`), 1 por
   player, criada e destruída por frame — a demo existe pra mostrar isso na cara.
   Não trocar por `WorkerThreadPool` sem o custo de criação virar problema.
-- Sem locks enquanto cada tarefa escrever só no próprio índice (`players[i]`).
-  Se algum dado passar a ser compartilhado, aí sim `Mutex` (e vale mostrar na
-  demo).
+- Sem locks enquanto cada tarefa escrever só no próprio índice (`units[i]`).
+  O Mutex da reserva de carne é o contraponto: protege só a seção crítica curta,
+  nunca o movimento dos entregadores.
 - `Input` e IA só na main thread: os players fazem `poll_input()` (ou
   `bot_think()`, no modo bot) antes do dispatch; a tarefa lê `input` e nunca
   chama `Input` nem olha outra unidade.
