@@ -697,7 +697,7 @@ func _apply_cli() -> void:
 		elif arg == "--no-mutex":
 			village.use_mutex = false
 		elif arg == "--no-fila":
-			village.use_semaphores = false
+			village.set_semaphores_enabled(false)
 		elif arg == "--auto-quit":
 			_auto_quit = true
 		elif arg.begins_with("--cura="):
@@ -1883,8 +1883,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		hud.show_notice("Cura primeiro: %s" % HEAL_MODE_NAMES[heal_mode], 2.5)
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_V:
-		# Liga/desliga os semáforos (as filas)
-		village.use_semaphores = not village.use_semaphores
+		# Liga/desliga os semáforos de capacidade (as filas)
+		village.set_semaphores_enabled(not village.use_semaphores)
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_X:
 		# Liga/desliga o lock do depósito no armazém (Village.deposit)

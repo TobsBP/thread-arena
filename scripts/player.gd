@@ -166,10 +166,6 @@ var delivered := 0.0  ## tudo que ESTE aldeão já descarregou — só a Thread 
 var holds_mine := false  ## está com uma vaga do semáforo da mina
 var holds_fire := false  ## está com o espeto da fogueira
 var holds_door := false  ## está com uma vaga do armazém (indo pra porta ou lá dentro)
-## holds_* = ocupando o lugar; permit_* = pegou vaga de semáforo e tem que devolver.
-var permit_mine := false
-var permit_fire := false
-var permit_door := false
 var hide_amount := 0.0  ## 0 = à vista, 1 = dentro do armazém (UnitSprite não desenha)
 var meat_texture: Texture2D  ## corrida carregando carne crua
 var meat_idle_texture: Texture2D
@@ -351,23 +347,21 @@ func drop_work() -> void:
 
 
 func _release_slots() -> void:
+	if village != null:
+		if holds_mine:
+			village.leave_slot(Village.Slot.MINE)
+		if holds_fire:
+			village.leave_slot(Village.Slot.FIRE)
+		if holds_door:
+			village.leave_slot(Village.Slot.DEPOT)
 	holds_mine = false
 	holds_fire = false
 	holds_door = false
-	if permit_mine:
-		permit_mine = false
-		village.mine_slots.post()
-	if permit_fire:
-		permit_fire = false
-		village.fire_slots.post()
-	if permit_door:
-		permit_door = false
-		village.depot_slots.post()
 
 
 ## Tenta ocupar um lugar com vagas.
-func _take_slot(slots: Semaphore) -> bool:
-	return not village.use_semaphores or slots.try_wait()
+func _take_slot(slot: int) -> bool:
+	return village.try_enter_slot(slot)
 
 
 ## Quão rápido o serviço anda.
@@ -708,14 +702,12 @@ func _step_work(delta: float) -> void:
 					drop_work()
 		Phase.QUEUE:
 			if job == Job.GOLD:
-				if _take_slot(village.mine_slots):
+				if _take_slot(Village.Slot.MINE):
 					holds_mine = true
-					permit_mine = village.use_semaphores
 					_start_work(MINE_TIME)
-			elif holds_fire or _take_slot(village.fire_slots):
+			elif holds_fire or _take_slot(Village.Slot.FIRE):
 				if not holds_fire:
 					holds_fire = true
-					permit_fire = village.use_semaphores
 				if village.take(Village.Res.MEAT, 1.0):
 					_start_work(ROAST_TIME)
 				else:
@@ -762,10 +754,9 @@ func _step_work(delta: float) -> void:
 		Phase.ENTER:
 			# A porta do armazém: semáforo contador, DEPOT_SLOTS dentro por vez.
 			if not holds_door:
-				if not _take_slot(village.depot_slots):
+				if not _take_slot(Village.Slot.DEPOT):
 					return
 				holds_door = true
-				permit_door = village.use_semaphores
 				walk_time = 0.0
 			# Com a vaga, main.gd o leva até a porta (work_think); chegou, entra.
 			walk_time += delta

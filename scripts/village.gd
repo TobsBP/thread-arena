@@ -5,6 +5,7 @@ extends RefCounted
 ## Sempre try_wait(), nunca wait(): a Thread morre no fim do frame e bloquear travaria a main.
 
 enum Res { WOOD, GOLD, MEAT }
+enum Slot { MINE, DEPOT, FIRE }
 
 const MINE_SLOTS := 2
 const DEPOT_SLOTS := 2  ## quantos cabem dentro do armazém descarregando ao mesmo tempo
@@ -44,6 +45,10 @@ var depot_slots := Semaphore.new()
 var fire_slots := Semaphore.new()
 var roast_ready := Semaphore.new()
 var _lock := Mutex.new()
+var _slots_lock := Mutex.new()
+var _mine_occupants := 0
+var _depot_occupants := 0
+var _fire_occupants := 0
 
 
 func _init() -> void:
@@ -54,6 +59,83 @@ func _init() -> void:
 		depot_slots.post()
 	for _i in FIRE_SLOTS:
 		fire_slots.post()
+
+
+## Alterna só os limites de capacidade. Recalcula as permissões com base em
+## quem já ocupa cada lugar, inclusive se a tecla for alternada no meio do uso.
+func set_semaphores_enabled(enabled: bool) -> void:
+	_slots_lock.lock()
+	if use_semaphores == enabled:
+		_slots_lock.unlock()
+		return
+	use_semaphores = enabled
+	var slots: Array[int] = [Slot.MINE, Slot.DEPOT, Slot.FIRE]
+	for slot: int in slots:
+		var semaphore := _slot_semaphore(slot)
+		while semaphore.try_wait():
+			pass  ## zera as permissões antigas antes de recalcular
+		if enabled:
+			var available := maxi(_slot_capacity(slot) - _slot_occupants(slot), 0)
+			if available > 0:
+				semaphore.post(available)
+	_slots_lock.unlock()
+
+
+## Tenta pegar uma vaga sem bloquear a Thread do aldeão.
+func try_enter_slot(slot: int) -> bool:
+	_slots_lock.lock()
+	var admitted := not use_semaphores or _slot_semaphore(slot).try_wait()
+	if admitted:
+		_set_slot_occupants(slot, _slot_occupants(slot) + 1)
+	_slots_lock.unlock()
+	return admitted
+
+
+## Devolve a vaga. Só publica uma permissão se houver capacidade livre.
+func leave_slot(slot: int) -> void:
+	_slots_lock.lock()
+	var occupants := maxi(_slot_occupants(slot) - 1, 0)
+	_set_slot_occupants(slot, occupants)
+	if use_semaphores and occupants < _slot_capacity(slot):
+		_slot_semaphore(slot).post()
+	_slots_lock.unlock()
+
+
+func _slot_semaphore(slot: int) -> Semaphore:
+	match slot:
+		Slot.MINE:
+			return mine_slots
+		Slot.DEPOT:
+			return depot_slots
+	return fire_slots
+
+
+func _slot_capacity(slot: int) -> int:
+	match slot:
+		Slot.MINE:
+			return MINE_SLOTS
+		Slot.DEPOT:
+			return DEPOT_SLOTS
+	return FIRE_SLOTS
+
+
+func _slot_occupants(slot: int) -> int:
+	match slot:
+		Slot.MINE:
+			return _mine_occupants
+		Slot.DEPOT:
+			return _depot_occupants
+	return _fire_occupants
+
+
+func _set_slot_occupants(slot: int, amount: int) -> void:
+	match slot:
+		Slot.MINE:
+			_mine_occupants = amount
+		Slot.DEPOT:
+			_depot_occupants = amount
+		_:
+			_fire_occupants = amount
 
 
 ## Roda na Thread do aldeão, uma fatia da carga por frame (Player.UNLOAD_TIME)

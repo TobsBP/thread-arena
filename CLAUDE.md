@@ -144,10 +144,12 @@ Com `[B]`, `_bot_govern()` cuida do reino: compra o próximo nó de
 `BOT_BUILD_ORDER` em anéis em volta do castelo (`_bot_build`), sem tapar
 porta, cozinha nem mina.
 
-`[V]` desliga os semáforos (`Village.use_semaphores`): `Player._take_slot`
-passa a entrar sem `try_wait()`. `holds_*` = está ocupando o lugar;
-`permit_*` = pegou vaga de semáforo e tem que devolver — separados porque
-dá pra ligar/desligar no meio. Acima da lotação, mina e espeto rendem
+`[V]` alterna os semáforos de capacidade (`Village.set_semaphores_enabled`).
+`Village.try_enter_slot` contabiliza ocupantes mesmo com a fila desligada, e
+`leave_slot` devolve a vaga; ao reativar, as permissões são recalculadas a
+partir de quem já está dentro. O semáforo de carnes assadas (`roast_ready`)
+continua ativo, pois coordena disponibilidade de itens, não capacidade.
+Acima da lotação, mina e espeto rendem
 lotação/ocupantes pra cada um (`Village.mine_rate`/`fire_rate`, calculados
 por `_update_work_rates` antes do dispatch).
 
@@ -325,7 +327,7 @@ seguem com lock): o painel da vila no HUD mostra "entregue" (soma dos
 - Paralelismo com `Thread` explícita (`new`/`start`/`wait_to_finish`), 1 por
   player, criada e destruída por frame — a demo existe pra mostrar isso na cara.
   Não trocar por `WorkerThreadPool` sem o custo de criação virar problema.
-- Sem locks enquanto cada tarefa escrever só no próprio índice (`players[i]`).
+- Sem locks enquanto cada tarefa escrever só no estado da própria unidade.
   O único dado compartilhado é a `Village` dos aldeões — toda sincronização
   mora lá dentro, e a demo mostra (painel da vila, `[X]`).
 - `Semaphore` sempre com `try_wait()`, nunca `wait()`: a Thread morre no fim

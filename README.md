@@ -21,7 +21,7 @@ jogo volta pra seleção de personagem).
 | `T` | abre o menu do castelo de qualquer lugar: evolução, trabalhadores, obras (pausa o jogo) |
 | `M` | modo sem mobs: some com os goblins e para as ondas (o level segue subindo pelo tempo) |
 | `X` | liga/desliga o mutex do armazém da vila |
-| `V` | liga/desliga os semáforos (as filas da mina, do espeto e do armazém) |
+| `V` | liga/desliga os semáforos de capacidade (mina, espeto e armazém; carnes assadas continuam sincronizadas) |
 | `Z` | quem a vila cura primeiro: menos vida → mais perto → rodízio |
 | `R` | depois da derrota: recomeça a partida |
 | `C` | modo apresentação: a câmera para em cada ponto de trabalho da vila |
@@ -41,12 +41,10 @@ player, na ordem dos devices 0/1/2.
 
 ## O que a demo mostra
 
-3 players + os aldeões + os goblins da onda atual — cada um executa um trabalho pesado
-por frame (`WORK_LOAD` iterações de `sqrt`, em `Player.step()`). No modo
-serial esse custo cai inteiro no frame da main thread e o FPS despenca. No
-modo threads, `main.gd` cria e destrói 1 `Thread` por unidade a cada frame e
-o FPS se mantém — a diferença aumenta conforme mais goblins entram em campo
-(cada um é mais uma Thread).
+3 players + aldeões + goblins da onda atual — cada unidade executa seu passo
+por frame. No modo serial, tudo roda na main thread; no modo threads,
+`main.gd` cria e finaliza uma `Thread` por unidade a cada frame. O sistema
+operacional decide como escalonar essas threads entre os núcleos.
 
 Players e goblins escrevem só nos próprios campos (`Player.step()`), então
 não há lock: é o caso fácil de paralelismo (dados particionados, sem estado
@@ -129,18 +127,18 @@ primeiro. Não acumula: a próxima onda começa limpa. `[G]` solta um goblin
 avulso de tipo aleatório a qualquer momento, até um teto de segurança —
 é a forma mais rápida de ver o comparativo serial × threads esticar.
 
-### Castelos e evolução
+### Castelo e evolução
 
-A madeira e o ouro que o Camponês coleta são entregues nos **castelos** e vão
-pro banco do reino (`Kingdom`). O castelo azul é o principal: chegar perto e
-apertar `[T]` abre o menu, com três abas:
+A madeira e o ouro coletados pelos aldeões vão para o estoque compartilhado da
+vila (`Village`), que alimenta o banco do reino (`Kingdom`). O castelo azul é
+o principal: `[T]` abre o menu de qualquer lugar, com três abas:
 
 - **Evolução**: a árvore (`UpgradeTree`). Cada nó custa madeira/ouro e
   exige um level mínimo. Ela aumenta o total de trabalhadores, abre vagas por
   profissão (Lenhador desde o início, Minerador no L3, Açougueiro no L5 e
   Curandeiro no L7) e libera as construções.
-- **Trabalhadores**: distribui o total entre as profissões liberadas. Por
-  enquanto é só número, os trabalhadores ainda não nascem no mapa.
+- **Trabalhadores**: distribui os aldeões que aparecem e trabalham no mapa,
+  entre as profissões liberadas. Os novos aldeões chegam e procuram uma vaga.
 - **Construir**: Casa (+2 trabalhadores), Castelo (novo ponto de entrega),
   Torre (atira nos goblins) e Quartel (+vida máxima). Depois de escolher,
   aparece um fantasma na frente do player: o ataque confirma e a 6ª tecla
@@ -154,8 +152,8 @@ No canto superior direito fica o status (level, madeira, ouro,
 trabalhadores). No inferior direito ficam os comandos dos 3 players numa lista
 só: uma linha por ação, com a tecla de cada player marcada com a cor dele. Em
 destaque aparece o que dá pra fazer naquele momento, como "[T] abrir o
-castelo" ao chegar perto dele. Por enquanto o banco está **infinito**
-(`Kingdom.INFINITE_BANK`), e só os levels travam a árvore.
+castelo". O estoque é finito: depósitos, construções, combustível e compras
+consomem recursos.
 
 ## Estrutura
 
