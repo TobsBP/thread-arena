@@ -11,6 +11,23 @@ const FEET := Vector2(0, 26)  ## a colisão é nos pés, não no meio do sprite
 const DEADZONE := 0.2
 const DEATH_TIME := 1.6  ## tombar + sumir (dá tempo do efeito de morte tocar)
 const HEAL_FX_DURATION := 1.1  ## dura o efeito de cura (Heal_Effect, 11 quadros a 10fps)
+## Aldeão (ver work_think/_step_work): quanto dura cada serviço.
+const CHOP_TIME := 3.0
+const MINE_TIME := 4.0  ## o mais demorado: é o que faz a fila da mina aparecer
+const ROAST_TIME := 5.0
+const UNLOAD_TIME := 2.5  ## a carga entra no armazém aos poucos, uma fatia por frame
+const DOOR_REACH := 10.0  ## em cima da porta: daqui ele some pra dentro do armazém
+const DOOR_GIVE_UP := 6.0  ## com a vaga na mão e sem conseguir chegar na porta: entra assim mesmo
+const DOOR_FADE := 0.25  ## segundos pra sumir porta adentro (e pra reaparecer)
+const WORK_GIVE_UP := 30.0  ## andando há tanto tempo sem chegar: larga o serviço
+const SPAWN_FX_DURATION := 0.5  ## baforada de poeira quando o aldeão volta
+const LIGHT_TIME := 2.4  ## batendo a pederneira até a lenha pegar (4 batidas)
+const WAIT_HOP_EVERY := 1.7  ## esperando: um pulinho de impaciência a cada tanto
+const WAIT_HOP_TIME := 0.28
+const STROLL_RADIUS := 150.0  ## aldeão livre não se afasta mais que isso da pracinha
+const STROLL_PACE := 0.4  ## fração da velocidade: passeando, não correndo
+const LIGHT_REACH := 40.0  ## perto o bastante do canto da fogueira pra acender
+const CRANK_REACH := 12.0  ## em cima do ponto da manivela: daqui ele gira o espeto
 const SPECIAL_HOLD_THRESHOLD := 0.5  ## segurar ataque por isso troca pro golpe especial
 const HIT_FLASH_DURATION := 0.15  ## pisca vermelho ao tomar dano
 const HIT_POP_DURATION := 0.2  ## "soco": dá um pulo de escala ao tomar dano
@@ -29,6 +46,11 @@ const BOT_DANGER_DIST := 300.0  ## goblin mais perto que isso conta como ameaça
 const BOT_KITE_DIST := 250.0  ## arqueira: goblin mais perto que isso, ela se afasta
 const BOT_GUARD_MARGIN := 30.0  ## folga sobre o alcance do goblin pra erguer a guarda
 
+## Aldeão: `Job` é o serviço, `Phase` em que pé ele está, `Cargo` o que leva nas costas.
+enum Job { NONE, WOOD, GOLD, HUNT, COOK, SERVE, FUEL }
+enum Phase { GO, QUEUE, WORK, HAUL, UNLOAD, ENTER }
+enum Cargo { WOOD, GOLD, MEAT, ROAST, NONE }
+
 var pos: Vector2
 var spawn_pos: Vector2  ## volta pra cá ao renascer
 var color: Color
@@ -36,10 +58,11 @@ var keys: PackedInt32Array  ## [cima, baixo, esquerda, direita, atacar, guarda] 
 var joy_device: int
 var speed := SPEED
 var is_enemy := false
+## Quanto o goblin "enxerga" esta unidade mais longe do que ela está, ao escolher o alvo (chase)
+var aggro_bias := 1.0
 var is_bot := false  ## bot_think() no lugar de poll_input() — ligado por [B] em main.gd
 var is_archer := false  ## dispara Arrow de verdade (ver main.gd _fire_arrow)
 var is_sheep := false  ## morte mostra baforada em vez de caveira (ver UnitSprite)
-var is_courier := false  ## pawn de cenário que leva carne até players feridos
 var is_monk := false  ## "ataque" cura o aliado mais perto em vez de bater (ver main.gd)
 var is_thrower := false  ## inimigo à distância: "ataque" arremessa Dynamite em vez de bater (ver main.gd)
 var is_bomber := false  ## chega perto e explode em vez de bater (ver main.gd _resolve_bomber_blasts)
@@ -101,7 +124,7 @@ var attack_hit := false  ## já causou dano neste golpe (1 acerto por ciclo)
 var attack_cd := 0.0  ## inimigo: segundos até poder bater de novo (só chase())
 var attack_cooldown := 1.2  ## inimigo: respiro entre golpes — varia por tipo (ver EnemyTypes)
 var death_time := -1.0  ## < 0 = vivo; senão, segundos desde que morreu
-var heal_fx_time := -1.0  ## >= 0 = efeito de cura após carne/aura (ver main.gd)
+var heal_fx_time := -1.0  ## >= 0 = tocando o efeito de cura (ver main.gd _resolve_meat_pickup)
 var hit_flash_time := -1.0  ## >= 0 = piscando vermelho (acabou de tomar dano)
 var hit_pop_time := -1.0  ## >= 0 = no meio do "soco" de escala do impacto
 var block_fx_time := -1.0  ## >= 0 = mostrando o escudo de bloqueio bem-sucedido
@@ -124,6 +147,39 @@ var anim_fps := 10.0
 var anim_time := 0.0
 var facing_right := true
 var wander_time := 0.0  ## ovelhas: segundos até trocar de rumo
+## Estado do aldeão: a main thread decide (work_think), a Thread dele executa (_step_work).
+var is_worker := false
+var village: Village  ## compartilhada por todos os aldeões; null pra quem não é
+var job := Job.NONE
+var phase := Phase.GO
+var work_target := Vector2.ZERO  ## pra onde ir agora
+var work_reach := 70.0  ## perto o bastante de work_target pra parar
+var work_tree := -1  ## índice em ArenaMap.tree_spots (só Job.WOOD)
+var work_prey: Player = null  ## ovelha reservada (HUNT) ou quem vai receber a carne
+var work_timer := 0.0
+var work_hits := -1  ## golpes de machado/picareta já contados neste serviço; só main.gd mexe (_resolve_work_fx)
+var walk_time := 0.0  ## segundos andando nesta fase (ver WORK_GIVE_UP)
+var cargo := Cargo.NONE
+var cargo_size := 1.0  ## quanto vale a carga inteira (Village.LOAD)
+var cargo_left := 0.0  ## quanto dela ainda está nas costas durante a descarga
+var delivered := 0.0  ## tudo que ESTE aldeão já descarregou — só a Thread dele escreve
+var holds_mine := false  ## está com uma vaga do semáforo da mina
+var holds_fire := false  ## está com o espeto da fogueira
+var holds_door := false  ## está com uma vaga do armazém (indo pra porta ou lá dentro)
+var hide_amount := 0.0  ## 0 = à vista, 1 = dentro do armazém (UnitSprite não desenha)
+var meat_texture: Texture2D  ## corrida carregando carne crua
+var meat_idle_texture: Texture2D
+var roast_texture: Texture2D  ## idem, carregando a assada
+var roast_idle_texture: Texture2D
+var light_texture: Texture2D  ## acendendo a fogueira com a pederneira (Job.FUEL)
+var light_frames := 6
+var crank_texture: Texture2D  ## girando a manivela do espeto (Job.COOK)
+var crank_frames := 8
+## Por Job: a corrida e o parado com a ferramenta do serviço na mão.
+var job_run: Array[Texture2D] = []
+var job_idle: Array[Texture2D] = []
+var fx_cargo := Cargo.NONE  ## o que estava descarregando no frame passado; só main.gd mexe
+var spawn_fx_time := -1.0  ## >= 0 = tocando a baforada de quem acabou de voltar
 var carrying := false
 var loaded_texture: Texture2D  ## sprite de corrida com a carga nas costas
 var loaded_idle_texture: Texture2D  ## sprite parado com a carga (null = usa idle normal)
@@ -170,7 +226,8 @@ func chase(targets: Array[Player], map: ArenaMap, attack_range: float,
 	for t in targets:
 		if t.is_dead():
 			continue
-		if best == null or pos.distance_squared_to(t.pos) < pos.distance_squared_to(best.pos):
+		if best == null or pos.distance_to(t.pos) * t.aggro_bias \
+				< pos.distance_to(best.pos) * best.aggro_bias:
 			best = t
 	if best == null:
 		input = Vector2.ZERO
@@ -200,6 +257,142 @@ func wander(delta: float) -> void:
 	if wander_time <= 0.0:
 		wander_time = randf_range(1.0, 3.0)
 		input = Vector2.ZERO if randf() < 0.35 else Vector2.RIGHT.rotated(randf() * TAU)
+
+
+## Aldeão, na main thread: só escreve `input` e o lado, como o chase().
+func work_think(map: ArenaMap) -> void:
+	attack_pressed = false
+	if job == Job.NONE and not is_dead():
+		return  ## livre: quem decide o passo é stroll(), chamado por main.gd
+	# Cozinheiro com o espeto: primeiro vai até a manivela (ponto exato, ao lado do fogo)
+	if phase == Phase.ENTER and not is_dead():
+		var to_door := village.door_spot - pos
+		input = to_door.normalized() if holds_door and to_door.length() > DOOR_REACH * 0.4 \
+				else Vector2.ZERO
+		return
+	# (Quem acende o fogo, idem: ponto exato do outro lado, virado pra lenha.)
+	if phase == Phase.WORK and (job == Job.COOK or job == Job.FUEL) and not is_dead():
+		var to_spot := (village.cook_spot if job == Job.COOK else village.light_spot) - pos
+		if to_spot.length() > CRANK_REACH * 0.5:
+			input = to_spot.normalized()
+		else:
+			input = Vector2.ZERO
+			facing_right = village.kitchen.x >= pos.x
+		return
+	if work_prey:
+		work_target = work_prey.pos  # alvo que anda: ovelha ou player
+	var to_target := work_target - pos
+	var walking := job != Job.NONE and (phase == Phase.GO or phase == Phase.HAUL)
+	if is_dead() or not walking or to_target.length() < work_reach:
+		input = Vector2.ZERO
+		# Parado o input zera, então o lado é decidido aqui — igual ao chase().
+		if job != Job.NONE and absf(to_target.x) > 1.0:
+			facing_right = to_target.x >= 0.0
+		return
+	input = map.nav_dir(pos + FEET, work_target + FEET)
+
+
+## Aldeão livre: passeia devagar perto do castelo.
+func stroll(home: Vector2, delta: float) -> void:
+	wander_time -= delta
+	var away := pos - home
+	if away.length() > STROLL_RADIUS:
+		input = -away.normalized() * STROLL_PACE
+		wander_time = 1.0
+	elif wander_time <= 0.0:
+		wander_time = randf_range(1.2, 3.5)
+		input = Vector2.ZERO if randf() < 0.55 \
+				else Vector2.RIGHT.rotated(randf() * TAU) * STROLL_PACE
+
+
+## Novo destino e nova fase de uma vez.
+func head_to(target: Vector2, reach: float, new_phase: Phase) -> void:
+	work_target = target
+	work_reach = reach
+	phase = new_phase
+	walk_time = 0.0
+
+
+func load_cargo(kind: Cargo) -> void:
+	cargo = kind
+	cargo_size = Village.LOAD[kind] if kind < Village.LOAD.size() else 1.0
+	cargo_left = cargo_size
+	carrying = true
+	match kind:
+		Cargo.WOOD:
+			loaded_texture = wood_texture
+			loaded_idle_texture = wood_idle_texture
+		Cargo.GOLD:
+			loaded_texture = gold_texture
+			loaded_idle_texture = gold_idle_texture
+		Cargo.ROAST:
+			loaded_texture = roast_texture
+			loaded_idle_texture = roast_idle_texture
+		_:
+			loaded_texture = meat_texture
+			loaded_idle_texture = meat_idle_texture
+
+
+## Larga tudo: serviço, carga e — o que importa — as vagas de semáforo que estiver segurando.
+func drop_work() -> void:
+	_release_slots()
+	job = Job.NONE
+	phase = Phase.GO
+	cargo = Cargo.NONE
+	cargo_left = 0.0
+	carrying = false
+	work_prey = null
+	work_tree = -1
+	walk_time = 0.0
+
+
+func _release_slots() -> void:
+	if village != null:
+		if holds_mine:
+			village.leave_slot(Village.Slot.MINE)
+		if holds_fire:
+			village.leave_slot(Village.Slot.FIRE)
+		if holds_door:
+			village.leave_slot(Village.Slot.DEPOT)
+	holds_mine = false
+	holds_fire = false
+	holds_door = false
+
+
+## Tenta ocupar um lugar com vagas.
+func _take_slot(slot: int) -> bool:
+	return village.try_enter_slot(slot)
+
+
+## Quão rápido o serviço anda.
+func _work_rate() -> float:
+	if job == Job.GOLD:
+		return village.mine_rate
+	if job == Job.COOK:
+		return village.fire_rate
+	return 1.0
+
+
+## Faixa do aldeão (UnitSprite): o que ele está fazendo agora.
+func work_label() -> String:
+	if phase == Phase.QUEUE and not (holds_mine or holds_fire):
+		return "FILA"
+	if phase == Phase.ENTER and not holds_door:
+		return "FILA"
+	match job:
+		Job.WOOD:
+			return "LENHA"
+		Job.GOLD:
+			return "OURO"
+		Job.HUNT:
+			return "CARNE" if carrying else "CAÇA"
+		Job.COOK:
+			return "ASSA"
+		Job.SERVE:
+			return "ASSADA"
+		Job.FUEL:
+			return "FOGO"
+	return "LIVRE"
 
 
 ## Main thread only: a classe Input não é thread-safe. Só lê o teclado/controle
@@ -429,6 +622,9 @@ func step(delta: float, work_load: int, area: Rect2,
 	heat = fmod(acc, 1.0)
 	if is_dead():
 		death_time += delta
+		if is_worker:
+			drop_work()  ## morreu: devolve a vaga que estivesse segurando
+			hide_amount = 0.0
 		t_end = Time.get_ticks_usec()
 		return
 	pos = (pos + input * speed * delta).clamp(area.position, area.end)
@@ -441,6 +637,15 @@ func step(delta: float, work_load: int, area: Rect2,
 	_step_hit_pop(delta)
 	_step_block_fx(delta)
 	_step_fuse(delta)
+	if spawn_fx_time >= 0.0:
+		spawn_fx_time += delta
+		if spawn_fx_time >= SPAWN_FX_DURATION:
+			spawn_fx_time = -1.0
+	if is_worker:
+		_step_work(delta)
+		# Dentro do armazém = descarregando com a vaga da porta.
+		var inside := phase == Phase.UNLOAD and holds_door
+		hide_amount = clampf(hide_amount + (delta if inside else -delta) / DOOR_FADE, 0.0, 1.0)
 	if input.x > 0.05:
 		facing_right = true
 	elif input.x < -0.05:
@@ -466,6 +671,118 @@ func _push_out(blockers: Array[Rect2]) -> void:
 		else:
 			pos.y += dy
 			feet.y += dy
+
+
+## Serviço do aldeão, na Thread dele.
+func _step_work(delta: float) -> void:
+	if job == Job.NONE:
+		return
+	var arrived := pos.distance_to(work_target) < work_reach
+	match phase:
+		Phase.GO:
+			if not arrived:
+				_walk(delta)
+			elif job == Job.WOOD:
+				_start_work(CHOP_TIME)
+			elif job == Job.GOLD or job == Job.COOK:
+				phase = Phase.QUEUE
+			elif job == Job.FUEL:
+				# Chegou no armazém: tira 1 lenha (checar e tirar no mesmo lock) e leva pra fogueira.
+				if village.take(Village.Res.WOOD, 1.0):
+					load_cargo(Cargo.WOOD)
+					head_to(village.light_spot, LIGHT_REACH, Phase.HAUL)
+				else:
+					drop_work()  ## gastaram a lenha antes
+			elif job == Job.SERVE:
+				# Consumidor: só leva se ainda tiver assada na mesa.
+				if village.take_roast():
+					load_cargo(Cargo.ROAST)
+					phase = Phase.HAUL  # main.gd aponta pra quem está ferido
+				else:
+					drop_work()
+		Phase.QUEUE:
+			if job == Job.GOLD:
+				if _take_slot(Village.Slot.MINE):
+					holds_mine = true
+					_start_work(MINE_TIME)
+			elif holds_fire or _take_slot(Village.Slot.FIRE):
+				if not holds_fire:
+					holds_fire = true
+				if village.take(Village.Res.MEAT, 1.0):
+					_start_work(ROAST_TIME)
+				else:
+					drop_work()  ## a carne que vinha buscar já foi; devolve o espeto
+		Phase.WORK:
+			# Sem fogo a carne não assa.
+			if job == Job.COOK and not village.fire_lit():
+				return
+			work_timer -= delta * _work_rate()
+			if work_timer > 0.0:
+				return
+			match job:
+				Job.WOOD:
+					load_cargo(Cargo.WOOD)
+					head_to(village.depot, Village.SITE_REACH, Phase.HAUL)
+				Job.GOLD:
+					_release_slots()  ## saiu da mina: a vaga volta pro semáforo
+					load_cargo(Cargo.GOLD)
+					head_to(village.depot, Village.SITE_REACH, Phase.HAUL)
+				Job.COOK:
+					village.put_roast()
+					drop_work()
+				Job.FUEL:
+					village.add_fuel()
+					drop_work()
+		Phase.HAUL:
+			if cargo == Cargo.ROAST or work_prey != null:
+				return  ## entrega em mãos: main.gd resolve (_resolve_deliveries)
+			if job == Job.FUEL:
+				if arrived:
+					# A lenha vai pra fogueira: sai das costas e ele se abaixa pra acender.
+					cargo = Cargo.NONE
+					carrying = false
+					_start_work(LIGHT_TIME)
+				else:
+					_walk(delta)
+				return
+			if arrived:
+				# Carne crua fica na cozinha, ao ar livre; lenha e ouro entram no armazém.
+				phase = Phase.UNLOAD if cargo == Cargo.MEAT else Phase.ENTER
+				walk_time = 0.0
+			else:
+				_walk(delta)
+		Phase.ENTER:
+			# A porta do armazém: semáforo contador, DEPOT_SLOTS dentro por vez.
+			if not holds_door:
+				if not _take_slot(Village.Slot.DEPOT):
+					return
+				holds_door = true
+				walk_time = 0.0
+			# Com a vaga, main.gd o leva até a porta (work_think); chegou, entra.
+			walk_time += delta
+			if pos.distance_to(village.door_spot) < DOOR_REACH or walk_time > DOOR_GIVE_UP:
+				phase = Phase.UNLOAD
+		Phase.UNLOAD:
+			# Uma fatia por frame: é o que põe dois aldeões escrevendo no armazém no mesmo frame.
+			var amount := minf(cargo_left, cargo_size * delta / UNLOAD_TIME)
+			village.deposit(cargo, amount)
+			cargo_left -= amount
+			delivered += amount
+			if cargo_left <= 0.0:
+				drop_work()
+
+
+func _start_work(seconds: float) -> void:
+	phase = Phase.WORK
+	work_timer = seconds
+	walk_time = 0.0
+
+
+## Rede de segurança: destino que não dá pra alcançar.
+func _walk(delta: float) -> void:
+	walk_time += delta
+	if walk_time > WORK_GIVE_UP:
+		drop_work()
 
 
 ## Um ataque não pode ser cancelado: só reinicia depois do ciclo acabar.
@@ -581,19 +898,98 @@ func is_running() -> bool:
 	return input.length_squared() > 0.01
 
 
+## Lá dentro do armazém: não esbarra em ninguém nem apanha.
+func is_hidden() -> bool:
+	return hide_amount > 0.5
+
+
+## Aldeão no meio de uma atividade — trabalhando, entrando no armazém ou lá dentro.
+func is_busy() -> bool:
+	if not is_worker or job == Job.NONE:
+		return false
+	return phase == Phase.WORK or phase == Phase.UNLOAD or (phase == Phase.ENTER and holds_door)
+
+
+## Aldeão no meio do serviço: machado, picareta, pedra na lenha ou a manivela do espeto.
+func is_working() -> bool:
+	if not is_worker or job == Job.NONE or phase != Phase.WORK:
+		return false
+	if job == Job.COOK:
+		return village.fire_lit() and pos.distance_to(village.cook_spot) < CRANK_REACH
+	if job == Job.FUEL:
+		return pos.distance_to(village.light_spot) < CRANK_REACH
+	return true
+
+
+## O que o aldeão está esperando, pro balão em cima da cabeça (linha da Wait_Bubble.png)
+func waiting_for() -> int:
+	if not is_worker or is_dead() or job == Job.NONE:
+		return -1
+	if phase == Phase.QUEUE and not (holds_mine or holds_fire):
+		return 0 if job == Job.GOLD else 1
+	if phase == Phase.ENTER and not holds_door:
+		return 3
+	if job == Job.COOK and phase == Phase.WORK and not village.fire_lit():
+		return 2
+	return -1
+
+
+## Deslocamento vertical do corpo de quem espera.
+func wait_hop() -> float:
+	if waiting_for() < 0:
+		return 0.0
+	var t := fmod(anim_time + spawn_pos.x * 0.013, WAIT_HOP_EVERY)
+	return -5.0 * sin(t / WAIT_HOP_TIME * PI) if t < WAIT_HOP_TIME else 0.0
+
+
+func _work_texture() -> Texture2D:
+	match job:
+		Job.WOOD:
+			return axe_texture
+		Job.GOLD:
+			return pickaxe_texture
+		Job.FUEL:
+			return light_texture
+	return crank_texture
+
+
+func _work_frames() -> int:
+	match job:
+		Job.WOOD:
+			return axe_frames
+		Job.GOLD:
+			return pickaxe_frames
+		Job.FUEL:
+			return light_frames
+	return crank_frames
+
+
 func get_current_texture() -> Texture2D:
 	if is_guarding and guard_texture:
 		return guard_texture
 	if is_harvesting():
 		return axe_texture if harvest_kind == "wood" else pickaxe_texture
+	if is_working():
+		return _work_texture()
 	if is_attacking():
 		if is_special and special_texture:
 			return special_texture
 		if attack_texture:
 			return attack_texture
 	if not is_running():
-		return loaded_idle_texture if carrying and loaded_idle_texture else idle_texture
-	return loaded_texture if carrying and loaded_texture else run_texture
+		if carrying and loaded_idle_texture:
+			return loaded_idle_texture
+		return _job_texture(job_idle, idle_texture)
+	if carrying and loaded_texture:
+		return loaded_texture
+	return _job_texture(job_run, run_texture)
+
+
+## A textura do serviço atual, se a unidade tiver uma (ver job_run/job_idle).
+func _job_texture(by_job: Array[Texture2D], fallback: Texture2D) -> Texture2D:
+	if job < by_job.size() and by_job[job] != null:
+		return by_job[job]
+	return fallback
 
 
 func get_current_frame() -> int:
@@ -602,6 +998,9 @@ func get_current_frame() -> int:
 	if is_harvesting():
 		var hframes := axe_frames if harvest_kind == "wood" else pickaxe_frames
 		return mini(int(harvest_time * anim_fps), hframes - 1)
+	if is_working():
+		# Em laço enquanto durar o serviço, não uma vez só como o golpe.
+		return int(anim_time * anim_fps) % _work_frames()
 	if is_attacking():
 		var frames := special_frames if is_special and special_texture else attack_frames
 		if (special_texture if is_special else attack_texture):

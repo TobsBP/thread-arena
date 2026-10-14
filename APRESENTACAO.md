@@ -36,9 +36,9 @@ Esse compartilhamento é a fonte de todo o poder e de todo o perigo:
 - **poder** — passar dados entre threads é só passar um ponteiro, custo zero;
 - **perigo** — duas threads podem escrever no mesmo endereço ao mesmo tempo.
 
-No Thread Arena, o array `players` é visível por todas as threads. A demo é
-segura não porque impede o acesso, mas porque **particiona** quem escreve onde
-(seção 2a).
+No Thread Arena, as unidades são compartilhadas entre as threads. No passo
+normal, cada thread atualiza sua própria unidade. Os aldeões também acessam o
+estado comum de `Village`; ali entram o Mutex e os semáforos (seção 2).
 
 ### Concorrência × paralelismo
 
@@ -58,10 +58,10 @@ Um programa concorrente num processador de 1 núcleo **não fica mais rápido**:
 SO só reveza as threads (isso é o *time slicing*), e cada troca custa um
 **context switch** — salvar registradores, trocar contexto, poluir o cache.
 
-**Esta demo mede paralelismo de verdade**, não concorrência: as 3 tarefas rodam
-em núcleos físicos distintos e o tempo de parede cai. Se rodasse num CPU de 1
-núcleo, o modo threads seria *mais lento* que o serial (mesmo trabalho + custo
-de coordenar).
+**Esta demo demonstra concorrência com Threads explícitas**. Quando há mais
+de um núcleo disponível, o sistema operacional pode executar tarefas em
+paralelo; a demo não fixa Threads a núcleos. Em um núcleo, o escalonador reveza
+as tarefas e o overhead das Threads pode deixar a execução mais lenta.
 
 ### Latência × throughput
 
@@ -107,14 +107,28 @@ Riscos associados:
   threads passam mais tempo esperando do que trabalhando;
 - **starvation** — uma thread nunca consegue o lock.
 
-O passo das unidades não usa `Mutex`, porque cada tarefa escreve em uma
-unidade diferente. A reserva de carne usa `Mutex`, pois vários entregadores
-podem tentar reservar o mesmo drop; `[X]` alterna essa proteção.
+O passo individual das unidades não usa `Mutex`, porque cada tarefa escreve na
+própria unidade. Os aldeões compartilham o estoque e as vagas da vila: o Mutex
+protege operações no estoque, e os semáforos controlam a ocupação da mina,
+cozinha e armazém. `[X]` liga/desliga a proteção do estoque; `[V]` liga/desliga
+as filas de capacidade.
+
+### Semáforo contador
+
+Um semáforo contador representa vagas disponíveis. `try_wait()` tenta consumir
+uma vaga sem bloquear; se não houver nenhuma, o aldeão permanece na fila e tenta
+de novo no frame seguinte. `post()` devolve a vaga quando ele sai. Nesta demo,
+há duas vagas na mina, duas na porta do armazém e uma no espeto. O semáforo de
+assadas prontas coordena cozinheiros (produtores) e aldeões que levam a comida
+(consumidores). O Mutex não é substituto: ele protege o estoque, enquanto o
+semáforo regula quantos ocupam um recurso.
 
 ### Thread pool e o padrão fork-join
 
-Criar uma thread do zero é caro: o SO precisa alocar pilha, registrar no
-scheduler etc. Criar 3 por frame, 100 vezes por segundo, seria absurdo.
+Criar uma thread do zero tem custo: o SO precisa alocar pilha e registrá-la no
+escalonador. Esta demo faz isso a cada frame de propósito, para deixar o ciclo
+`new`/`start`/`wait_to_finish` explícito; num jogo de produção, um pool costuma
+evitar esse custo repetido.
 
 Um **thread pool** resolve isso: as threads são criadas **uma vez** na
 inicialização e ficam **dormindo**; despachar trabalho é só acordar uma delas.
@@ -129,7 +143,8 @@ main ───┼─ tarefa 1 ─┼─── barreira ─── main continua
  fork   └─ tarefa 2 ─┘      join
 ```
 
-- **fork** — a demo chama `Thread.start()` para cada unidade ou entregador;
+- **fork** — a demo chama `Thread.start()` para cada unidade viva, incluindo os
+  aldeões;
 - **join / barreira** — `wait_to_finish()` bloqueia a main
   thread até **todas** terminarem.
 
@@ -146,10 +161,10 @@ A garantia se chama relação **happens-before**: se A acontece-antes de B, ent�
 tudo que A escreveu está visível para B. Primitivas de sincronização (mutex,
 barreira, atômicos) **estabelecem** essa relação.
 
-Na demo: `poll_input()` escreve `input` na main thread; a **barreira do
-dispatch** estabelece o happens-before, então a worker enxerga o valor correto
-sem precisar de lock. Não é "deu certo por sorte" — é o modelo de memória
-funcionando.
+Na demo: `poll_input()`/`work_think()` escreve `input` na main thread antes de
+`Thread.start()`, e a worker lê esse valor durante `step()`. A main thread só
+consulta os resultados depois de `wait_to_finish()`. Para campos compartilhados
+entre aldeões, como o estoque, o Mutex estabelece a exclusão e a sincronização.
 
 ### Granularidade e o ponto de equilíbrio
 
@@ -219,8 +234,12 @@ mais tarde vira a explicação do resultado (seção 3).
 | Tecla | Ação |
 |-------|------|
 | `ESPAÇO` | alterna **SERIAL ↔ THREADS** |
-| `C` | alterna a política de entrega de carne |
-| `X` | alterna `Mutex` ON/OFF para demonstrar disputa |
+| `C` | alterna o foco da câmera de apresentação |
+| `X` | alterna `Mutex` ON/OFF no estoque da vila |
+| `V` | liga/desliga os semáforos de capacidade (filas); `roast_ready` permanece ativo |
+| `Z` | alterna quem a vila cura primeiro |
+| `B` | liga/desliga o modo bot |
+| `R` | reinicia após o fim de jogo |
 | `H` | cicla o nível de detalhe do HUD (tudo → só números → nada) |
 
 Teclado e analógico **somam** no mesmo player, então dá pra jogar com teclado,
@@ -251,9 +270,11 @@ O HUD ([scripts/hud.gd](scripts/hud.gd)) tem três blocos:
    `[ESPAÇO]` o degrau aparece nos três gráficos ao mesmo tempo, o que mostra
    que a mudança é **global** (o modo de execução), não um player específico.
 
-Os pawns entregadores recolhem a carne que cai das ovelhas e levam aos players
-feridos. O HUD também exibe a política ativa, disputas por drop e cargas
-duplicadas quando o Mutex está desligado.
+Os aldeões têm funções de lenhador, minerador, caçador, cozinheiro, entregador
+e abastecedor da fogueira. Eles caçam ovelhas, levam carne crua aos jogadores
+feridos ou assam a carne antes da entrega. O HUD mostra estoque, filas,
+ocupação da mina/porta/espeto, estado do Mutex e dos semáforos e perdas no
+estoque quando a proteção do Mutex está desligada.
 
 ### Por que 3 players e não 256 agentes
 
@@ -283,55 +304,57 @@ quando todos os passos terminaram.
 Os dois modos chamam a mesma função e fazem o mesmo trabalho. A comparação muda
 quem executa os passos, não o algoritmo de movimento.
 
-### Reserva da carne: a seção crítica do `Mutex`
+### Vila: Mutex, semáforos e sincronismo
 
-Os entregadores tentam reservar drops em tarefas paralelas. Há quatro pawns,
-mas o semáforo `claim_semaphore` tem duas permissões. `_ready()` libera as vagas
-com `post(2)`. Em `_claim_meat()`, cada tarefa chama `wait()` para ocupar uma
-vaga e `post()` ao terminar para devolvê-la. Se as duas vagas estiverem ocupadas,
-as outras tarefas esperam. Assim, no máximo dois entregadores ficam nessa etapa
-ao mesmo tempo.
+`_process()` toma decisões e prepara os serviços na main thread. Quando o modo
+THREADS está ligado, cria uma `Thread` por unidade e chama `Player.step()`; para
+os aldeões, `step()` chama `_step_work()`. O aldeão atualiza sua própria unidade,
+mas várias unidades podem acessar a mesma `Village`.
 
-O semáforo limita **quantas tarefas entram**; ele não protege sozinho a carne.
-Com `[X] Mutex ON`, `_claim_meat()` usa `meat_mutex.lock()` e `unlock()` para
-proteger a checagem de `MeatDrop.claimed` e a reserva exclusiva. O Mutex deixa
-uma thread por vez nessa seção crítica, mesmo que o semáforo admita duas tarefas
-na etapa. Se outro entregador já reservou aquele drop, a tarefa tenta o próximo.
-O lock cobre só essa decisão; a viagem e a cura rodam fora dele, na main thread.
+**Mutex no estoque:** `Village.deposit()` trava `_lock` antes de ler e atualizar
+madeira/ouro/carne e o total `counted`, e libera com `unlock()`. Outras
+operações do estoque (`take()`, `add()` e `add_fuel()`) também usam o mesmo
+Mutex. Com `[X]` desligado, `deposit()` deixa duas descargas lerem o mesmo total
+antes de escrever. O HUD compara `counted` com a soma de `Player.delivered` e
+mostra o recurso perdido. Essa é a demonstração concreta do que a seção crítica
+evita.
 
-Com o Mutex OFF, as tarefas leem o mesmo snapshot antes de publicar as reservas.
-O jogo aplica as propostas depois do join, então dois entregadores podem levar
-a mesma carne. É uma corrida lógica intencional, repetível e segura para a demo;
-não é uma data race real na memória do jogo. O HUD conta disputas e duplicações.
+**Semáforos para vagas:** `Village._init()` cria as permissões iniciais com
+`post()`: duas para mina, duas para a porta do armazém e uma para o espeto.
+`Player._take_slot()` usa `try_wait()` para pegar uma vaga sem bloquear a thread.
+Se não houver vaga, o aldeão fica em `Phase.QUEUE` e tenta de novo no próximo
+frame. Ao sair, `_release_slots()` chama `post()` para devolver as permissões.
+`[V]` desliga esses limites de capacidade; a simulação deixa aldeões trabalharem
+em paralelo, e o ritmo por trabalhador se ajusta à lotação.
 
-`[C]` alterna três políticas de escalonamento: entregar ao ferido mais próximo,
-priorizar a menor porcentagem de vida ou alternar entre os feridos em rodízio.
-Isso escolhe quem recebe cada carga; é uma política do jogo, não o escalonador
-do sistema operacional.
+**Produtor e consumidor:** quando o cozinheiro termina, `Village.put_roast()`
+registra uma assada e publica uma permissão em `roast_ready`. O entregador chama
+`take_roast()`: `try_wait()` consome uma assada disponível, ou falha sem esperar.
+Assim não se entrega uma porção que ainda não foi produzida nem a mesma porção
+duas vezes.
 
-### Sincronismo: esperar as tarefas
+**Join e barreira:** `Thread.wait_to_finish()` em `_process()` espera todas as
+unidades terminarem antes de a main thread resolver caça, entregas, animações e
+colisões. É sincronismo entre fases. Já `try_wait()`/`post()` coordena vagas e
+produção/consumo, enquanto `lock()`/`unlock()` protege uma região crítica: são
+mecanismos diferentes para problemas diferentes.
 
-Sincronismo é coordenar tarefas para que cada etapa espere a outra quando
-precisa. `wait()` do semáforo espera até haver uma vaga e consome essa permissão;
-`post()` devolve uma vaga. Já `Thread.wait_to_finish()` espera a thread terminar
-por completo. Em `_assign_courier_jobs()`, a main thread faz esse join antes de
-agrupar as propostas. No passo de combate, também espera todas as threads de
-unidades antes de resolver ataques e colisões. Portanto, sincronismo é o
-conceito geral; semáforo, Mutex e `wait_to_finish()` são mecanismos com funções
-diferentes.
+**Política de atendimento:** `[Z]` alterna entre jogador com menor fração de
+vida, mais próximo ou há mais tempo sem ser curado. `_hurt_player()` escolhe o
+destinatário da entrega. Isso é uma regra de decisão do jogo, não o escalonador
+de threads do sistema operacional.
 
 ### O que fica em cada thread
 
-`Input`, a IA, o movimento dos entregadores, a cura, as colisões e a árvore de
-cena continuam na main thread. Cada tarefa paralela de unidade só chama
-`Player.step()` para a sua própria unidade. A tarefa de reserva da carne só
-escolhe um drop; com o Mutex ON, só ela altera `claimed` enquanto segura o lock.
-As tarefas devolvem seus resultados e a main thread atualiza o mundo depois do
-join.
+`Input`, a IA e a escolha de serviço são executados na main thread. Cada thread
+chama `Player.step()` para a unidade que lhe pertence. As funções de `Village`
+coordenam os recursos compartilhados com Mutex e semáforos. Depois do
+`wait_to_finish()`, a main thread aplica os efeitos que alteram outros objetos
+do mundo.
 
-A comparação principal segue sendo serial × threads para o passo de combate.
-O Mutex demonstra um problema diferente: proteger um recurso compartilhado
-quando várias tarefas disputam a mesma carne.
+O comparativo serial × threads mede o passo das unidades. `[X]` demonstra a
+perda de atualizações no estoque sem Mutex; `[V]` mostra o efeito de limitar
+vagas concorrentes com semáforos.
 
 ### Detalhe de medição: vsync desligado
 
@@ -351,6 +374,12 @@ Sem trava, o FPS reflete direto o custo do frame, e o gargalo volta a ser a CPU
 ---
 
 ## 3. Por que os resultados deram isso
+
+> **Referência histórica:** os números e cálculos desta seção foram medidos na
+> versão anterior, com apenas três tarefas de player e sem a simulação atual da
+> vila. Eles explicam aquela medição e não devem ser apresentados como benchmark
+> da versão atual. Para comparar esta versão, execute a mesma partida e duração
+> nos dois modos (SERIAL/THREADS) e registre os valores do HUD.
 
 ### Os números
 
@@ -532,11 +561,12 @@ para equilibrar.
 | **Latência** | Tempo de *um* frame (o `ms` do HUD) | HUD |
 | **Throughput** | Frames por segundo (o FPS) | HUD |
 | **Data race** | Dois acessos concorrentes ao mesmo endereço, um sendo escrita, sem sincronização → indefinido | seção crítica |
-| **Race condition** | O resultado depende da ordem de execução das threads | Mutex OFF (simulada) |
-| **Seção crítica** | Trecho que só uma thread pode executar por vez | reserva de carne |
-| **Mutex** | Deixa uma thread por vez conferir e reservar um drop | `_claim_meat()` |
-| **Semáforo** | Limita a duas as tarefas simultâneas na etapa de reserva | `wait()` / `post()` |
-| **Sincronismo** | Coordena etapas e dependências entre tarefas | semáforo, Mutex e join |
+| **Race condition** | O resultado depende da ordem de execução das threads | depósito sem Mutex |
+| **Seção crítica** | Trecho que só uma thread pode executar por vez | atualização do estoque em `Village` |
+| **Mutex** | Protege leitura/atualização do estoque compartilhado | `Village.deposit()` |
+| **Semáforo contador** | Conta vagas disponíveis em recursos compartilhados | `Village` + `Player._take_slot()` |
+| **Semáforo produtor/consumidor** | Conta assadas prontas para retirada | `roast_ready` |
+| **Sincronismo** | Coordena fases e dependências entre tarefas | `wait_to_finish()`, semáforo e Mutex |
 | **Deadlock** | Threads esperando umas pelas outras em ciclo; nada progride | seção 0 |
 | **Contenção** | Threads disputando o mesmo lock, esperando mais do que trabalhando | seção 0 |
 | **Thread pool** | Threads criadas uma vez e reutilizadas — conceito do Godot; esta demo usa `Thread.new()` | conceito |
@@ -569,12 +599,10 @@ para equilibrar.
 ## Apêndice B — Perguntas frequentes
 
 **Por que não usar `Mutex` "por segurança" em todo lugar?**
-Porque lock não é seguro por padrão — é **caro** por padrão. Ele cria uma seção
-crítica, e seção crítica é código serial, que entra direto na Lei de Amdahl.
-No passo de cada unidade, não há dado compartilhado sendo escrito, então um
-lock só custaria. Já a reserva de carne compartilha `MeatDrop.claimed`, então
-usa `Mutex` só nessa seção curta. A ordem certa é: primeiro tente
-**particionar**; sincronize os dados que realmente são compartilhados.
+Porque lock custa tempo e serializa o trecho protegido. No passo de cada
+unidade, cada thread atualiza sua própria unidade, então um lock só adicionaria
+custo. No depósito, várias threads atualizam o mesmo estoque; ali o Mutex
+protege a operação compartilhada.
 
 **Threads sempre deixam o programa mais rápido?**
 Não. Se a carga por tarefa for menor que o custo de despachá-la, o paralelo
@@ -582,14 +610,14 @@ perde (ponto de equilíbrio). Num CPU de 1 núcleo, perde sempre. E se a parte
 serial for grande, o ganho é limitado independentemente dos núcleos (Amdahl).
 
 **Quantas threads o jogo cria?**
-No passo de combate, uma por unidade viva em cada frame. A reserva de carne
-cria uma por entregador livre quando há drops disponíveis. O sistema operacional
-decide em que núcleo e quando cada thread executa.
+No modo THREADS, uma por unidade viva em cada frame — players, inimigos e
+aldeões. O sistema operacional decide em que núcleo e quando cada thread
+executa.
 
 **O modo paralelo pode dar resultado diferente do serial?**
-O passo de combate produz o mesmo resultado porque cada tarefa escreve só na
-própria unidade. A comparação de Mutex é separada: com `X` desligado a demo
-simula de propósito uma reserva duplicada de carne.
+O passo individual escreve na unidade correspondente. Já os aldeões compartilham
+o estoque: com `[X]` desligado, descargas simultâneas podem sobrescrever o total,
+e o HUD mostra a diferença entre o que foi entregue e o que o estoque contou.
 
 **Por que medir o `max` dos tempos e não a média?**
 Porque existe barreira: a main thread só continua quando a **última** terminar.

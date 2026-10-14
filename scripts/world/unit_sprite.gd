@@ -25,6 +25,9 @@ const HEAL_FX := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free
 const WOOD_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_02.png")
 const GOLD_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_03.png")
 ## Escudinho que pisca quando o bloqueio absorve um golpe (ver is_blocking_fx).
+## Balão de quem espera: 4 linhas (mina, espeto, fogo, armazém) × 4 quadros.
+const WAIT_BUBBLE := preload("res://assets/Thread Arena/Wait_Bubble.png")
+const WAIT_BUBBLE_SIZE := Vector2(44, 38)
 const SHIELD_ICON := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/UI Elements/UI Elements/Icons/Icon_06.png")
 
 ## Recortes: as duas texturas têm as pontas nas bordas e o miolo em x 128..192.
@@ -78,7 +81,9 @@ func _process(_delta: float) -> void:
 
 func _draw() -> void:
 	var body := -Player.FEET  # centro do corpo, relativo aos pés
-	if show_badge:
+	if unit.hide_amount >= 1.0:
+		return  ## dentro do armazém
+	if show_badge and unit.hide_amount < 0.5:
 		# Sombra elíptica sob os pés (a ovelha já vem com a sua no sprite).
 		draw_set_transform(Vector2(0, 10), 0.0, Vector2(1.0, 0.35))
 		draw_circle(Vector2.ZERO, 20.0, Color(0.0, 0.0, 0.0, 0.3))
@@ -86,16 +91,15 @@ func _draw() -> void:
 
 	_draw_dust()
 	_draw_body(body)
-	if unit.is_courier and unit.carrying:
-		draw_texture_rect(MeatDrop.TEXTURE,
-				Rect2(body + Vector2(-12, -62), Vector2(24, 24)), false)
+	_draw_spawn_fx(body)
 	_draw_dead(body)
 	_draw_heal_fx(body)
 	_draw_block_fx(body)
-	if not show_badge or unit.is_dead():
-		return
+	if not show_badge or unit.is_dead() or unit.hide_amount > 0.3:
+		return  ## entrando/saindo do armazém: só o corpo, sem faixa nem barra
 
 	_draw_resource_count(body)
+	_draw_wait_bubble(body)
 
 	# Faixa com o nome e barra de vida, ambas do pack de UI.
 	PackUI.hslice(self, UI_RIBBON, Rect2(body + Vector2(-30, -92), Vector2(60, 22)),
@@ -103,7 +107,7 @@ func _draw() -> void:
 	draw_string(
 		ThemeDB.fallback_font,
 		body + Vector2(-30, -75),
-		"ENEMY" if unit.is_enemy else ("BOT" if unit.is_bot else "P%d" % (unit.joy_device + 1)),
+		_badge_text(),
 		HORIZONTAL_ALIGNMENT_CENTER,
 		60,
 		12,
@@ -133,6 +137,15 @@ func _draw() -> void:
 		draw_texture_rect_region(UI_BAR_FILL,
 				Rect2(stam_bar.position + Vector2(7, 4), Vector2((stam_bar.size.x - 14) * stam_ratio, 3)),
 				Rect2(0, 30, 64, 3), Color(1.0, 0.82, 0.15))
+
+
+## Aldeão mostra o que está fazendo (LENHA, OURO, FILA...) em vez de nome.
+func _badge_text() -> String:
+	if unit.is_worker:
+		return unit.work_label()
+	if unit.is_enemy:
+		return "ENEMY"
+	return "BOT" if unit.is_bot else "P%d" % (unit.joy_device + 1)
 
 
 ## Sprite animado, com flip ao virar pra esquerda.
@@ -166,7 +179,9 @@ func _draw_body(body: Vector2) -> void:
 		var pulse := 0.5 + 0.5 * sin(unit.anim_time * 16.0)
 		tint = Color(1.0, 1.0 - 0.35 * pulse, 0.35 + 0.3 * pulse, 1.0 - t)
 	# "Soco" do impacto: infla e volta rápido, só no instante de tomar o golpe.
-	draw_set_transform(body, dir * t * PI * 0.5, Vector2(dir, 1.0) * unit.pop_scale())
+	tint.a *= 1.0 - unit.hide_amount  # sumindo porta adentro
+	draw_set_transform(body + Vector2(0, unit.wait_hop()), dir * t * PI * 0.5,
+			Vector2(dir, 1.0) * unit.pop_scale())
 	draw_texture_rect_region(tex, dest_rect, src_rect, tint)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
@@ -221,6 +236,29 @@ func _draw_poof(body: Vector2) -> void:
 	var frame := int(unit.death_time / POOF_DURATION * DUST_FRAMES)
 	if frame >= DUST_FRAMES:
 		return
+	var s := DUST_SIZE * POOF_SCALE
+	draw_texture_rect_region(DUST,
+			Rect2(body - Vector2(s, s) * 0.5, Vector2(s, s)),
+			Rect2(frame * DUST_SIZE, 0, DUST_SIZE, DUST_SIZE),
+			Color(1, 1, 1, 0.9))
+
+
+## Em cima da faixa: o que o aldeão está esperando e os pontinhos passando.
+func _draw_wait_bubble(body: Vector2) -> void:
+	var row := unit.waiting_for()
+	if row < 0:
+		return
+	var frame := int(unit.anim_time * 3.0) % 4
+	draw_texture_rect_region(WAIT_BUBBLE,
+			Rect2(body + Vector2(-WAIT_BUBBLE_SIZE.x * 0.5, -94.0 - WAIT_BUBBLE_SIZE.y), WAIT_BUBBLE_SIZE),
+			Rect2(Vector2(frame, row) * WAIT_BUBBLE_SIZE, WAIT_BUBBLE_SIZE))
+
+
+## Aldeão voltando depois de morto: a mesma baforada, pra não surgir do nada.
+func _draw_spawn_fx(body: Vector2) -> void:
+	if unit.spawn_fx_time < 0.0:
+		return
+	var frame := mini(int(unit.spawn_fx_time / Player.SPAWN_FX_DURATION * DUST_FRAMES), DUST_FRAMES - 1)
 	var s := DUST_SIZE * POOF_SCALE
 	draw_texture_rect_region(DUST,
 			Rect2(body - Vector2(s, s) * 0.5, Vector2(s, s)),

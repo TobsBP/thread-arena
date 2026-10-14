@@ -5,6 +5,10 @@ class_name UpgradeTree
 ## é uma coluna no CastleMenu e os nós descem em sequência (`requires` é o de
 ## cima). Balanceamento todo aqui.
 ##
+## A árvore custa só OURO — o que os mineradores trazem e o que cada goblin
+## derrubado larga. A lenha fica pras construções (BuildSite) e pro fogo da
+## cozinha. Tudo libera até o level 5: quem segura o ritmo é o ouro.
+##
 ## effect: {max_workers = N} soma no total de trabalhadores;
 ##         {job = Kingdom.Job.X, cap = N} soma no limite da profissão (sair de
 ##         0 é o que libera ela); {build = &"tipo"} só libera a construção
@@ -15,42 +19,42 @@ const BRANCHES := ["Moradia", "Lenhador", "Minerador", "Açougueiro", "Curandeir
 const NODES := [
 	# Moradia
 	{id = &"houses_1", branch = 0, title = "Casas I", desc = "+2 trabalhadores no total",
-		wood = 5, gold = 0, level = 1, requires = &"", effect = {max_workers = 2}},
+		wood = 0, gold = 6, level = 1, requires = &"", effect = {max_workers = 2}},
 	{id = &"houses_2", branch = 0, title = "Casas II", desc = "+2 trabalhadores no total",
-		wood = 10, gold = 3, level = 3, requires = &"houses_1", effect = {max_workers = 2}},
+		wood = 0, gold = 14, level = 2, requires = &"houses_1", effect = {max_workers = 2}},
 	{id = &"houses_3", branch = 0, title = "Casas III", desc = "+2 trabalhadores no total",
-		wood = 20, gold = 8, level = 6, requires = &"houses_2", effect = {max_workers = 2}},
+		wood = 0, gold = 26, level = 4, requires = &"houses_2", effect = {max_workers = 2}},
 	# Lenhador (já começa liberado, com 2 vagas)
 	{id = &"axes_1", branch = 1, title = "Machados I", desc = "+1 vaga de Lenhador",
-		wood = 6, gold = 0, level = 2, requires = &"", effect = {job = Kingdom.Job.LUMBERJACK, cap = 1}},
+		wood = 0, gold = 5, level = 1, requires = &"", effect = {job = Kingdom.Job.LUMBERJACK, cap = 1}},
 	{id = &"axes_2", branch = 1, title = "Machados II", desc = "+1 vaga de Lenhador",
-		wood = 12, gold = 4, level = 4, requires = &"axes_1", effect = {job = Kingdom.Job.LUMBERJACK, cap = 1}},
-	# Minerador
-	{id = &"miner", branch = 2, title = "Liberar Minerador", desc = "libera a profissão (1 vaga)",
-		wood = 8, gold = 0, level = 3, requires = &"", effect = {job = Kingdom.Job.MINER, cap = 1}},
-	{id = &"picks_1", branch = 2, title = "Picaretas I", desc = "+1 vaga de Minerador",
-		wood = 10, gold = 2, level = 4, requires = &"miner", effect = {job = Kingdom.Job.MINER, cap = 1}},
-	{id = &"picks_2", branch = 2, title = "Picaretas II", desc = "+1 vaga de Minerador",
-		wood = 16, gold = 6, level = 6, requires = &"picks_1", effect = {job = Kingdom.Job.MINER, cap = 1}},
+		wood = 0, gold = 12, level = 3, requires = &"axes_1", effect = {job = Kingdom.Job.LUMBERJACK, cap = 1}},
+	# Minerador (já começa liberado, com 1 vaga: sem ouro a árvore não anda)
+	{id = &"miner", branch = 2, title = "Picaretas I", desc = "+1 vaga de Minerador",
+		wood = 0, gold = 6, level = 1, requires = &"", effect = {job = Kingdom.Job.MINER, cap = 1}},
+	{id = &"picks_1", branch = 2, title = "Picaretas II", desc = "+1 vaga de Minerador",
+		wood = 0, gold = 12, level = 2, requires = &"miner", effect = {job = Kingdom.Job.MINER, cap = 1}},
+	{id = &"picks_2", branch = 2, title = "Picaretas III", desc = "+1 vaga de Minerador",
+		wood = 0, gold = 20, level = 4, requires = &"picks_1", effect = {job = Kingdom.Job.MINER, cap = 1}},
 	# Açougueiro
 	{id = &"butcher", branch = 3, title = "Liberar Açougueiro", desc = "libera a profissão (1 vaga)",
-		wood = 10, gold = 4, level = 5, requires = &"", effect = {job = Kingdom.Job.BUTCHER, cap = 1}},
+		wood = 0, gold = 8, level = 2, requires = &"", effect = {job = Kingdom.Job.BUTCHER, cap = 1}},
 	{id = &"knives_1", branch = 3, title = "Facas I", desc = "+1 vaga de Açougueiro",
-		wood = 12, gold = 6, level = 6, requires = &"butcher", effect = {job = Kingdom.Job.BUTCHER, cap = 1}},
+		wood = 0, gold = 14, level = 4, requires = &"butcher", effect = {job = Kingdom.Job.BUTCHER, cap = 1}},
 	# Curandeiro
 	{id = &"healer", branch = 4, title = "Liberar Curandeiro", desc = "libera a profissão (1 vaga)",
-		wood = 10, gold = 10, level = 7, requires = &"", effect = {job = Kingdom.Job.HEALER, cap = 1}},
+		wood = 0, gold = 10, level = 3, requires = &"", effect = {job = Kingdom.Job.HEALER, cap = 1}},
 	{id = &"herbs_1", branch = 4, title = "Ervas I", desc = "+1 vaga de Curandeiro",
-		wood = 14, gold = 12, level = 8, requires = &"healer", effect = {job = Kingdom.Job.HEALER, cap = 1}},
+		wood = 0, gold = 16, level = 5, requires = &"healer", effect = {job = Kingdom.Job.HEALER, cap = 1}},
 	# Construções: cada nó libera um tipo na aba Construir
 	{id = &"carpentry", branch = 5, title = "Carpintaria", desc = "libera construir Casa",
-		wood = 3, gold = 0, level = 1, requires = &"", effect = {build = &"house"}},
+		wood = 0, gold = 3, level = 1, requires = &"", effect = {build = &"house"}},
 	{id = &"masonry", branch = 5, title = "Alvenaria", desc = "libera construir Castelo",
-		wood = 10, gold = 4, level = 3, requires = &"carpentry", effect = {build = &"castle"}},
+		wood = 0, gold = 8, level = 2, requires = &"carpentry", effect = {build = &"castle"}},
 	{id = &"watch", branch = 5, title = "Vigias", desc = "libera construir Torre",
-		wood = 10, gold = 6, level = 4, requires = &"masonry", effect = {build = &"tower"}},
+		wood = 0, gold = 10, level = 3, requires = &"masonry", effect = {build = &"tower"}},
 	{id = &"training", branch = 5, title = "Treino", desc = "libera construir Quartel",
-		wood = 12, gold = 8, level = 5, requires = &"watch", effect = {build = &"barracks"}},
+		wood = 0, gold = 12, level = 4, requires = &"watch", effect = {build = &"barracks"}},
 ]
 
 

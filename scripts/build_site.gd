@@ -9,13 +9,13 @@ extends RefCounted
 ## Catálogo: custo, tempo de obra e o nó da árvore (UpgradeTree) que libera.
 const KINDS := {
 	&"house": {title = "Casa", desc = "+2 trabalhadores (moradia)",
-		wood = 8, gold = 0, time = 8.0, unlock = &"carpentry"},
+		wood = 12, gold = 0, time = 8.0, unlock = &"carpentry"},
 	&"castle": {title = "Castelo", desc = "novo ponto de entrega",
-		wood = 20, gold = 10, time = 20.0, unlock = &"masonry"},
+		wood = 30, gold = 8, time = 20.0, unlock = &"masonry"},
 	&"tower": {title = "Torre", desc = "atira nos goblins por perto",
-		wood = 12, gold = 6, time = 12.0, unlock = &"watch"},
+		wood = 18, gold = 4, time = 12.0, unlock = &"watch"},
 	&"barracks": {title = "Quartel", desc = "+15 de vida máxima pros players",
-		wood = 15, gold = 8, time = 15.0, unlock = &"training"},
+		wood = 22, gold = 6, time = 15.0, unlock = &"training"},
 }
 const ORDER: Array[StringName] = [&"house", &"castle", &"tower", &"barracks"]
 
