@@ -87,18 +87,67 @@ const MONK_HEAL_AMOUNT := 30.0
 const MONK_AURA_RADIUS := 150.0  ## regen passivo pra quem fica perto, sem precisar de cura ativa
 const MONK_AURA_RATE := 4.0  ## hp por segundo
 
-## Pawns: dois azuis e dois amarelos indo do toco à base com madeira. Cenário
-## vivo, igual às ovelhas — main thread, fora de units/threads.
-const PAWN_IDLE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Idle.png")
-const PAWN_RUN := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run.png")
-const PAWN_WOOD := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Run Wood.png")
-const PAWN_AXE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Blue Units/Pawn/Pawn_Interact Axe.png")
-const PAWN_IDLE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Idle.png")
-const PAWN_RUN_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Run.png")
+## Machado e madeira do Camponês jogável (skin "yellow", ver _skin_kit).
 const PAWN_WOOD_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Run Wood.png")
 const PAWN_AXE_Y := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/Yellow Units/Pawn/Pawn_Interact Axe.png")
-const PAWN_COUNT := 4
-const PAWN_SPEED := 120.0
+
+## Aldeões: unidades de verdade, 1 Thread cada; o que dividem está em Village.
+const PAWN_DIR := "res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Units/%s Units/Pawn/Pawn_%s.png"
+## Teto de aldeões no mapa, por mais que o reino tenha moradia.
+const MAX_VILLAGERS := 10
+## Goblin derrubado rende ouro pro reino: é a parte dos players na economia.
+const GOBLIN_GOLD := 1
+
+## Derrota: os três players caídos ao mesmo tempo.
+const PLAYER_RESPAWN_TIME := 6.0
+const WAVE_GROWTH := 0.05  ## vida e dano dos goblins: +5% por level
+
+## Quem a vila cura primeiro ([Z]): menos vida, mais perto ou há mais tempo sem receber.
+enum HealMode { WEAKEST, NEAREST, FAIR }
+const HEAL_MODE_NAMES := ["menos vida", "mais perto", "rodízio (há mais tempo sem)"]
+
+## Modo bot ([B]) também cuida da vila: compra a árvore nesta ordem e ergue estas obras.
+const BOT_GOVERN_EVERY := 1.0
+const BOT_BUY_ORDER: Array[StringName] = [
+	&"miner", &"houses_1", &"butcher", &"picks_1", &"healer", &"carpentry",
+	&"houses_2", &"axes_1", &"masonry", &"watch", &"picks_2", &"knives_1",
+	&"training", &"houses_3", &"herbs_1", &"axes_2",
+]
+const BOT_BUILD_ORDER: Array[StringName] = [&"barracks", &"tower", &"house"]
+const BOT_BUILD_LIMIT := {&"barracks": 3, &"tower": 3, &"house": 2}
+## Cor do "+N" que sobe quando um recurso entra no banco, por Village.Res.
+const RES_TEXT: Array[Color] = [Color(0.95, 0.80, 0.52), Color(1.0, 0.86, 0.25), Color(1.0, 0.56, 0.56)]
+const PAWN_SPEED := 150.0
+const WORKER_HP := 120.0
+## Estouro (dinamite, barril) pega o aldeão de raspão.
+const WORKER_BLAST_MULT := 0.5
+const WORKER_AGGRO := 1.7  ## goblin prefere player: ver Player.aggro_bias
+## Bem mais que Player.DEATH_TIME: perder aldeão custa, o player tem que proteger.
+const WORKER_RESPAWN_TIME := 15.0
+const TREE_REACH := 70.0  ## perto o bastante do pé da árvore pra bater o machado
+const HUNT_RANGE := 70.0  ## perto o bastante da ovelha pra dar a facada
+const DELIVERY_REACH := 75.0  ## perto o bastante do player pra entregar a carne
+const ROAST_HEAL := 70.0  ## assada cura bem mais que a crua (HEAL_AMOUNT)
+const RAW_DELIVERY_HP := 0.5  ## player abaixo disso: a carne vai crua, direto pra ele
+const SERVE_HP := 0.75  ## player abaixo disso: alguém busca uma assada na mesa
+const LARDER_CAP := 4  ## carne crua + assada + a caminho; acima disso ninguém caça
+## Carne assada: arte nossa, a carne do pack tostada.
+const ROAST_MEAT := preload("res://assets/Thread Arena/Roast_Meat.png")
+## O aldeão levando a assada: as tiras "Meat" do Pawn com a carne tostada.
+const PAWN_ROAST_DIR := "res://assets/Thread Arena/Pawn_%s_%s_Roast.png"
+## O cozinheiro na manivela do espeto (arte nossa, a partir do Idle do Pawn).
+const PAWN_CRANK := "res://assets/Thread Arena/Pawn_%s_Crank.png"
+## Quem acende o fogo, batendo pederneira na direção da lenha (idem).
+const PAWN_KINDLE := "res://assets/Thread Arena/Pawn_%s_Kindle.png"
+## Onde ficam o cozinheiro e quem acende, em relação ao pé da fogueira.
+const COOK_SPOT := Vector2(85, -60)
+const LIGHT_SPOT := Vector2(-72, -34)
+## Porta do armazém, em relação a village.depot.
+const DOOR_SPOT := Vector2(0, -38)
+const FIRE_LOW := 6.0  ## segundos de fogo: abaixo disso, com carne pra assar, alguém traz lenha
+## Quadro do Pawn_Interact Axe/Pickaxe em que a ferramenta pega.
+const TOOL_IMPACT_FRAME := 3
+const LIGHT_IMPACT_FRAME := 3  ## idem pro Pawn_*_Kindle (6 quadros): a batida da pederneira
 
 ## Ovelhas do pack Update 010 — mais fofas que a versão antiga (Sheep_Grass/Move).
 const SHEEP_GRAZE := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Sheep/HappySheep_Idle.png")
@@ -110,6 +159,17 @@ const SHEEP_SPEED := 45.0
 const WORLD := ArenaMap.WORLD
 const PLAY_AREA := ArenaMap.PLAY_AREA
 const CAM_MARGIN := 300.0  ## folga em volta dos players ao enquadrar
+## Modo apresentação: [C] tira a câmera dos players e para num ponto de trabalho da vila.
+enum CamFocus { PLAYERS, DEPOT, MINE, KITCHEN, WOODCUTTER, HUNTER }
+const FOCUS_ZOOM := 1.35
+const FOCUS_CAPTIONS := [
+	"",
+	"ARMAZÉM  —  Semáforo na porta (%d por vez) + Mutex no estoque lá dentro" % Village.DEPOT_SLOTS,
+	"MINA  —  Semáforo contador: %d vagas, o resto espera na fila" % Village.MINE_SLOTS,
+	"FOGUEIRA  —  Semáforo binário (1 espeto) + produtor-consumidor (assadas)",
+	"LENHADOR  —  cada aldeão é uma Thread; a árvore só cai depois da barreira",
+	"CAÇADOR  —  a ovelha é reservada na main thread: sem disputa, sem lock",
+]
 
 const SHOT_RANGE := 480.0  ## alcance do tiro direto do arqueiro, e também a distância máxima de mira automática
 const ARROW_DAMAGE := 22.0  ## um pouco menos que o corpo-a-corpo (25): é à distância
@@ -146,18 +206,40 @@ const MIN_ENEMY_SPAWN_DIST := 260.0  ## nasce longe dos players, não em cima
 var no_mobs := false
 
 var players: Array[Player] = []  ## só os controláveis (câmera enquadra estes)
-var units: Array[Player] = []  ## players + inimigo: 1 Thread por unidade
+var units: Array[Player] = []  ## players + aldeões + inimigos: 1 Thread por unidade
 ## ponytail: ovelhas são cenário — andam na main thread, fora do units/threads.
 var sheep: Array[Player] = []
-## Pawns lenhadores: cenário vivo, como as ovelhas.
+## Aldeões: também estão em `units` (viram Thread); esta lista é só o recorte.
 var workers: Array[Player] = []
-## Tudo que se esbarra: units + sheep + workers, montado uma vez no _ready().
+## players + aldeões: quem os goblins perseguem e machucam. Não muda de tamanho.
+var allies: Array[Player] = []
+var _prey: Array[Player] = []  ## recorte de allies que os goblins miram neste frame
+## O estado que os aldeões dividem — armazém (Mutex) e vagas (Semaphore).
+var village: Village
+var _kitchen_fire := 0  ## índice da fogueira da vila em ArenaMap.campfire_spots
+var _fire_shown := true  ## como a fogueira da vila está desenhada agora
+var _spit_shown := -1.0  ## progresso do assado desenhado agora (< 0 = sem espeto)
+var _village_mine := 0  ## índice da mina da vila em ArenaMap.gold_spots
+var _pawn_kits: Array = []  ## arte do Pawn azul e do amarelo (_pawn_textures)
+var heal_mode := HealMode.WEAKEST
+var _last_healed: Dictionary[Player, float] = {}  ## game_time da última cura de cada player (FAIR)
+var game_over := false
+var game_time := 0.0  ## segundos de partida (para na derrota)
+var _govern_timer := 0.0
+## Linha de comando (depois do "--"): partida sem ninguém, pra medir. Ver _apply_cli().
+var _auto_quit := false
+var _max_time := 0.0  ## > 0: encerra a partida nesse tempo mesmo sem derrota
+var _world_ready := false  ## depois do _ready: aldeão novo já entra em allies/bodies/cena
+var _village_now := {}  ## _village_stats() do frame: vai pro HUD e pros letreiros
+## Tudo que se esbarra: units + sheep, montado no _ready().
 var bodies: Array[Player] = []
 var arrows: Array[Arrow] = []  ## flechas em voo; roda fora do esquema de Threads
 var dynamites: Array[Dynamite] = []  ## dinamites arremessadas pelo Goblin da Dinamite
 var meat_drops: Array[MeatDrop] = []  ## carne largada por ovelha morta, no chão
 var damage_numbers: Array[DamageNumber] = []  ## "-25"/"+30" flutuando
 var cam_shake := 0.0  ## magnitude do tremor de câmera; decai sozinho (ver _update_camera)
+var cam_focus := CamFocus.PLAYERS  ## o que a câmera enquadra; [C] passa pro próximo
+var _focus_point := Vector2.ZERO  ## último ponto focado (lenhador/caçador somem e voltam)
 var _frame_t0 := 0
 ## Medidas retidas por modo (false = serial, true = threads), pra comparar
 ## os dois lado a lado mesmo depois de alternar.
@@ -199,22 +281,23 @@ func _ready() -> void:
 	_spawn_players()
 	_spawn_sheep()
 	_spawn_workers()
+	allies.assign(players)
+	allies.append_array(workers)
 	bodies.assign(units)
 	bodies.append_array(sheep)
-	bodies.append_array(workers)
 	# Cada unidade ganha um nó de desenho dentro do cenário y-sorted: é o que
 	# faz o player passar atrás da árvore. O dado segue RefCounted.
 	for u in units:
 		map.add_unit(UnitSprite.create(u))
 	for s in sheep:
 		map.add_unit(UnitSprite.create(s, false))
-	for w in workers:
-		map.add_unit(UnitSprite.create(w, false))
 	# Câmera presa ao mundo: nunca mostra fora do chão desenhado.
 	cam.limit_right = int(WORLD.x)
 	cam.limit_bottom = int(WORLD.y)
 	cam.position = WORLD * 0.5
 	castle_menu.build_chosen.connect(_on_build_chosen)
+	_world_ready = true
+	_apply_cli()
 	# Sem inimigo fixo mais: o level 1 nasce depois do banner (ver _update_level).
 	_start_banner()
 
@@ -261,7 +344,8 @@ func _spawn_players() -> void:
 		p.hp = p.max_hp
 		p.speed = kit.get("speed", Player.SPEED)
 		players.append(p)
-	units.assign(players)  # o inimigo entra depois, quando o level 1 nasce (ver _spawn_wave)
+	# Os aldeões entram logo depois (_spawn_workers) e o inimigo quando o level 1 nasce (_spawn_wave)
+	units.assign(players)
 
 
 ## Kit completo de uma skin: cor/ribbon + textura e quadros de idle/run/ataque,
@@ -384,7 +468,7 @@ func _end_combat() -> void:
 ## repete os tipos com hp/dano escalados (ver EnemyTypes.kind).
 func _spawn_wave(lvl: int) -> void:
 	var kind := EnemyTypes.kind(lvl - 1)
-	var scale := 1.0 + 0.15 * floorf(float(lvl - 1) / EnemyTypes.COUNT)
+	var scale := 1.0 + WAVE_GROWTH * (lvl - 1)
 	var count := clampi(WAVE_BASE + lvl - 1, WAVE_BASE, MAX_WAVE_ENEMIES)
 	for _i in count:
 		_wave_enemies.append(_spawn_enemy_of_type(kind, _random_enemy_spot(), scale))
@@ -396,7 +480,7 @@ func _spawn_wave(lvl: int) -> void:
 func _summon_random_enemy() -> void:
 	if level_phase != LevelPhase.COMBAT or no_mobs:
 		return
-	if units.size() - players.size() >= MAX_LIVE_ENEMIES:
+	if units.size() - allies.size() >= MAX_LIVE_ENEMIES:
 		return
 	var idx := randi() % mini(level, EnemyTypes.COUNT)
 	_spawn_enemy_of_type(EnemyTypes.kind(idx), _random_enemy_spot())
@@ -477,32 +561,592 @@ func _spawn_sheep() -> void:
 		sheep.append(s)
 
 
-## Cada pawn puxa madeira de uma árvore pro castelo principal — os pontos vêm
-## do mapa, que é quem sabe onde as coisas caíram.
+## A vila fica em volta do castelo principal.
 func _spawn_workers() -> void:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 4242
-	for i in PAWN_COUNT:
-		var blue := i % 2 == 0
-		var home: Vector2 = map.main_castle_spot
-		var w := Player.new(home, Color.WHITE, [0, 0, 0, 0, 0, 0], -1,
-				PAWN_IDLE if blue else PAWN_IDLE_Y,
-				PAWN_RUN if blue else PAWN_RUN_Y,
-				PAWN_AXE if blue else PAWN_AXE_Y, 8, 6, 6)
-		w.loaded_texture = PAWN_WOOD if blue else PAWN_WOOD_Y
-		w.speed = PAWN_SPEED
-		w.work_home = home
-		w.work_site = map.tree_spots[rng.randi() % map.tree_spots.size()]
-		workers.append(w)
+	village = Village.new()
+	kingdom.village = village  ## o banco do reino é o estoque da vila
+	village.depot = map.main_castle_spot
+	village.mine = _nearest_reachable(map.gold_spots, village.depot)
+	_village_mine = map.gold_spots.find(village.mine)
+	for i in map.campfire_spots.size():
+		if village.depot.distance_squared_to(map.campfire_spots[i]) \
+				< village.depot.distance_squared_to(map.campfire_spots[_kitchen_fire]):
+			_kitchen_fire = i
+	village.kitchen = map.campfire_spots[_kitchen_fire]
+	village.cook_spot = village.kitchen + COOK_SPOT
+	village.light_spot = village.kitchen + LIGHT_SPOT
+	village.door_spot = village.depot + DOOR_SPOT
+	_pawn_kits = [_pawn_textures("Blue"), _pawn_textures("Yellow")]
+	_sync_workers()
+
+
+## Um aldeão no mapa por trabalhador do reino (Kingdom.max_workers), até MAX_VILLAGERS.
+func _sync_workers() -> void:
+	var before := workers.size()
+	while workers.size() < mini(kingdom.max_workers, MAX_VILLAGERS):
+		_spawn_worker()
+	if _world_ready and workers.size() > before:
+		hud.show_notice("Chegou gente nova na vila: %d aldeões" % workers.size(), 3.0)
+
+
+func _spawn_worker() -> void:
+	var i := workers.size()
+	var blue := i % 2 == 0
+	var kit: Dictionary = _pawn_kits[i % 2]
+	# Em fila na frente da porta; a colisão espalha o resto.
+	var home := village.depot + Vector2((i % 6 - 2.5) * 44.0, 30.0 + 34.0 * (i / 6))
+	var w := Player.new(home,
+			Color(0.45, 0.62, 0.88) if blue else Color(0.86, 0.72, 0.30),
+			[0, 0, 0, 0, 0, 0], -1, kit.idle, kit.run, kit.knife, 8, 6, 4)
+	w.is_worker = true
+	w.village = village
+	w.ribbon_y = 68.0 if blue else 324.0
+	w.axe_texture = kit.axe
+	w.pickaxe_texture = kit.pickaxe
+	w.wood_texture = kit.wood
+	w.wood_idle_texture = kit.wood_idle
+	w.gold_texture = kit.gold
+	w.gold_idle_texture = kit.gold_idle
+	w.meat_texture = kit.meat
+	w.meat_idle_texture = kit.meat_idle
+	w.roast_texture = kit.roast
+	w.roast_idle_texture = kit.roast_idle
+	w.light_texture = kit.kindle
+	w.crank_texture = kit.crank
+	# Na ordem de Player.Job: NONE, WOOD, GOLD, HUNT, COOK, SERVE.
+	w.job_run.assign([null, kit.axe_run, kit.pickaxe_run, kit.knife_run, kit.knife_run, null])
+	w.job_idle.assign([null, kit.axe_idle, kit.pickaxe_idle, kit.knife_idle, kit.knife_idle, null])
+	w.speed = PAWN_SPEED
+	w.max_hp = WORKER_HP
+	w.aggro_bias = WORKER_AGGRO
+	w.hp = w.max_hp
+	workers.append(w)
+	units.append(w)
+	if _world_ready:
+		# Chegou no meio da partida (comprou Casas / ergueu Casa)
+		allies.append(w)
+		bodies.append(w)
+		map.add_unit(UnitSprite.create(w))
+		w.spawn_fx_time = 0.0
+
+
+## Toda a arte do Pawn de uma cor ("Blue"/"Yellow")
+func _pawn_textures(color: String) -> Dictionary:
+	var kit := {}
+	for entry in [["idle", "Idle"], ["run", "Run"], ["knife", "Interact Knife"],
+			["axe", "Interact Axe"], ["pickaxe", "Interact Pickaxe"],
+			["wood", "Run Wood"], ["wood_idle", "Idle Wood"],
+			["gold", "Run Gold"], ["gold_idle", "Idle Gold"],
+			["meat", "Run Meat"], ["meat_idle", "Idle Meat"],
+			["axe_run", "Run Axe"], ["axe_idle", "Idle Axe"],
+			["pickaxe_run", "Run Pickaxe"], ["pickaxe_idle", "Idle Pickaxe"],
+			["knife_run", "Run Knife"], ["knife_idle", "Idle Knife"]]:
+		kit[entry[0]] = load(PAWN_DIR % [color, entry[1]])
+	kit.roast = load(PAWN_ROAST_DIR % [color, "Run"])
+	kit.roast_idle = load(PAWN_ROAST_DIR % [color, "Idle"])
+	kit.crank = load(PAWN_CRANK % color)
+	kit.kindle = load(PAWN_KINDLE % color)
+	return kit
+
+
+## Dá pra um aldeão parar ao lado deste ponto? (parte das árvores/minas cai fora da área andável)
+func _reachable(spot: Vector2) -> bool:
+	return spot.distance_to(spot.clamp(PLAY_AREA.position, PLAY_AREA.end)) < 40.0
+
+
+func _nearest_reachable(points: Array[Vector2], from: Vector2) -> Vector2:
+	var best: Variant = null
+	for pt in points:
+		if not _reachable(pt):
+			continue
+		if best == null or from.distance_squared_to(pt) < from.distance_squared_to(best):
+			best = pt
+	# Nenhum alcançável: fica o mais perto mesmo.
+	return best if best != null else _nearest_point(points, from)
+
+
+## --- Derrota, bots governando e partidas de medição ---------------------
+
+## Os três caídos ao mesmo tempo: acabou.
+func _check_defeat() -> void:
+	for p in players:
+		if not p.is_dead():
+			return
+	_finish_game("derrota")
+
+
+func _finish_game(why: String) -> void:
+	game_over = true
+	if _auto_quit:
+		var v := _village_stats()
+		print("RESULT fim=%s level=%d tempo=%.0f mutex=%d fila=%d cura=%d entregue=%.1f contado=%.1f perdido=%.1f comprados=%d aldeoes=%d obras=%d madeira=%d ouro=%d" % [
+			why, level, game_time, int(village.use_mutex), int(village.use_semaphores), heal_mode,
+			v.delivered, v.counted, v.delivered - v.counted, kingdom.bought.size(),
+			workers.size(), build_sites.size(), kingdom.stock("wood"), kingdom.stock("gold")])
+		get_tree().quit()
+
+
+## Partida sem ninguém jogando, pra comparar configurações.
+func _apply_cli() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg == "--bots":
+			for p in players:
+				p.is_bot = true
+		elif arg == "--threads":
+			use_threads = true
+		elif arg == "--no-mutex":
+			village.use_mutex = false
+		elif arg == "--no-fila":
+			village.use_semaphores = false
+		elif arg == "--auto-quit":
+			_auto_quit = true
+		elif arg.begins_with("--cura="):
+			heal_mode = clampi(arg.trim_prefix("--cura=").to_int(), 0, HealMode.size() - 1) as HealMode
+		elif arg.begins_with("--timescale="):
+			Engine.time_scale = arg.trim_prefix("--timescale=").to_float()
+		elif arg.begins_with("--max-time="):
+			_max_time = arg.trim_prefix("--max-time=").to_float()
+
+
+## Mina e espeto acima da lotação (só acontece com os semáforos desligados)
+func _update_work_rates() -> void:
+	var miners := 0
+	var cooks := 0
+	for w in workers:
+		if w.holds_mine:
+			miners += 1
+		if w.holds_fire:
+			cooks += 1
+	village.mine_rate = minf(1.0, float(Village.MINE_SLOTS) / maxi(miners, 1))
+	village.fire_rate = minf(1.0, float(Village.FIRE_SLOTS) / maxi(cooks, 1))
+	if _max_time > 0.0 and game_time >= _max_time:
+		_finish_game("tempo")
+
+
+## Os bots cuidando do reino: ver BOT_BUY_ORDER.
+func _bot_govern(delta: float) -> void:
+	_govern_timer -= delta
+	if _govern_timer > 0.0:
+		return
+	_govern_timer = BOT_GOVERN_EVERY
+	for id in BOT_BUY_ORDER:
+		if kingdom.bought.has(id):
+			continue
+		var why := kingdom.buy_block(id, level)
+		if why.is_empty():
+			kingdom.buy(id, level)
+			hud.show_notice("Os bots compraram: %s" % UpgradeTree.find(id).title, 2.5)
+			return
+		if why == "sem recurso":
+			break  ## guarda o ouro pra este em vez de gastar nos de baixo
+	for kind in BOT_BUILD_ORDER:
+		var have: int = kingdom.built.get(kind, 0)
+		for site in build_sites:
+			if site.kind == kind and not site.done:
+				have += 1
+		if have >= BOT_BUILD_LIMIT[kind] or not kingdom.build_block(kind).is_empty():
+			continue
+		if kind == &"house" and kingdom.max_workers >= MAX_VILLAGERS:
+			continue
+		if _bot_build(kind):
+			return
+
+
+## Acha um lugar em volta do castelo e ergue.
+func _bot_build(kind: StringName) -> bool:
+	var size := _build_size(kind)
+	var center := map.main_castle_spot + Vector2(0, -150)
+	for ring in range(4, 13):
+		for step in ring * 6:
+			var ang := TAU * step / (ring * 6)
+			var at := center + Vector2(cos(ang), sin(ang) * 0.7) * ring * ArenaMap.TILE
+			var pos := ((at - size * 0.5) / ArenaMap.TILE).round() * ArenaMap.TILE
+			if not _bot_can_place(pos, size):
+				continue
+			kingdom.pay_build(kind)
+			var node := map.place_building(kind, pos)
+			build_sites.append(BuildSite.new(kind, pos, size, node))
+			hud.show_notice("Os bots começaram uma obra: %s" % BuildSite.KINDS[kind].title, 2.5)
+			return true
+	return false
+
+
+func _bot_can_place(pos: Vector2, size: Vector2) -> bool:
+	var base := ArenaMap.base_rect(pos, size)
+	if not map.can_build(base):
+		return false
+	var clear := base.grow(120.0)
+	for spot in [village.depot, village.door_spot, village.kitchen, village.cook_spot,
+			village.light_spot, village.mine]:
+		if clear.has_point(spot):
+			return false
+	var grown := base.grow(Player.BODY_RADIUS)
+	for b in bodies:
+		if not b.is_dead() and grown.has_point(b.pos + Player.FEET):
+			return false
+	return true
+
+
+## --- Aldeões ---------------------------------------------------------
+## Mesma divisão do resto: decidir é na main thread, antes do dispatch
+## (escolher serviço, destino, árvore, ovelha — tudo que olha pros outros);
+## executar é na Thread do aldeão (Player._step_work, que é onde ele disputa
+## o armazém e as vagas); e o que mexe em outro objeto — matar a ovelha,
+## curar o player, virar a árvore em toco — só depois da barreira.
+
+func _think_worker(w: Player) -> void:
+	if w.is_dead():
+		w.input = Vector2.ZERO
+		return
+	if w.job == Player.Job.NONE:
+		_assign_job(w)
+		if w.job == Player.Job.NONE:
+			# Sem vaga em profissão nenhuma: passeia pela pracinha do castelo.
+			w.stroll(village.depot + Vector2(0, 80), get_process_delta_time())
+	if w.job == Player.Job.WOOD and w.phase == Player.Phase.GO \
+			and map.tree_regrow[w.work_tree] > 0.0:
+		w.drop_work()  ## o Camponês derrubou esta árvore antes
+	elif w.job == Player.Job.HUNT and w.cargo == Player.Cargo.NONE:
+		var prey := w.work_prey
+		if prey == null or prey.is_dead():
+			w.drop_work()  ## alguém matou a ovelha antes
+		elif not w.is_attacking() and w.pos.distance_to(prey.pos) < HUNT_RANGE:
+			# Início do golpe na main thread, como o chase() e o poll_input().
+			w.attack_time = 0.0
+			w.attack_hit = false
+	elif w.phase == Player.Phase.HAUL and (w.cargo == Player.Cargo.ROAST
+			or (w.cargo == Player.Cargo.MEAT and w.work_prey != null)):
+		_aim_delivery(w)
+	w.work_think(map)
+
+
+## Sem serviço: pega um de uma profissão com menos gente do que a aba Trabalhadores pede.
+func _assign_job(w: Player) -> void:
+	var busy: Array[int] = [0, 0, 0, 0]  ## por Kingdom.Job: quantos já estão nela
+	var hunters := 0
+	var cooks_coming := 0  ## ainda não pegaram a carne do armazém
+	var cooks_roasting := 0
+	var servers_coming := 0  ## ainda não pegaram a assada da mesa
+	var fuelers := 0  ## levando lenha pra fogueira
+	for o in workers:
+		match o.job:
+			Player.Job.WOOD:
+				busy[Kingdom.Job.LUMBERJACK] += 1
+			Player.Job.FUEL:
+				busy[Kingdom.Job.LUMBERJACK] += 1
+				fuelers += 1
+			Player.Job.GOLD:
+				busy[Kingdom.Job.MINER] += 1
+			Player.Job.HUNT:
+				busy[Kingdom.Job.BUTCHER] += 1
+				hunters += 1
+			Player.Job.COOK:
+				busy[Kingdom.Job.BUTCHER] += 1
+				if o.phase == Player.Phase.WORK:
+					cooks_roasting += 1
+				else:
+					cooks_coming += 1
+			Player.Job.SERVE:
+				busy[Kingdom.Job.HEALER] += 1
+				if o.phase == Player.Phase.GO:
+					servers_coming += 1
+	var lumberjack := kingdom.assigned[Kingdom.Job.LUMBERJACK] > busy[Kingdom.Job.LUMBERJACK]
+	var miner := kingdom.assigned[Kingdom.Job.MINER] > busy[Kingdom.Job.MINER]
+	var butcher := kingdom.assigned[Kingdom.Job.BUTCHER] > busy[Kingdom.Job.BUTCHER]
+	var healer := kingdom.assigned[Kingdom.Job.HEALER] > busy[Kingdom.Job.HEALER]
+	var raw := floori(village.meat + Village.EPS)
+	if healer and village.roasts > servers_coming and _hurt_player(SERVE_HP) != null:
+		w.job = Player.Job.SERVE
+		w.head_to(village.kitchen, Village.SITE_REACH, Player.Phase.GO)
+		return
+	# Carne pra assar e fogueira apagada ou quase: um lenhador (não o cozinheiro) leva lenha.
+	var cooking := cooks_coming + cooks_roasting
+	var fire_wanted := village.fire_fuel < FIRE_LOW and fuelers == 0 and (cooking > 0 or raw > 0)
+	if lumberjack and fire_wanted and village.wood >= 1.0 - Village.EPS:
+		w.job = Player.Job.FUEL
+		w.head_to(village.depot, Village.SITE_REACH, Player.Phase.GO)
+		return
+	# Um espeto só: um assando e, no máximo, um esperando a vez (a fila do semáforo).
+	if butcher and raw > cooks_coming and cooking < Village.FIRE_SLOTS + 1:
+		w.job = Player.Job.COOK
+		w.head_to(village.kitchen, Village.SITE_REACH, Player.Phase.GO)
+		return
+	var options: Array = []
+	if miner:
+		options.append([busy[Kingdom.Job.MINER] * 1000.0 + village.gold, Player.Job.GOLD])
+	if lumberjack:
+		# A cozinha esperando fogo e o armazém sem lenha: lenha passa na frente.
+		options.append([busy[Kingdom.Job.LUMBERJACK] * 1000.0 + village.wood
+				- (5000.0 if fire_wanted else 0.0), Player.Job.WOOD])
+	# Despensa cheia: ninguém caça.
+	var larder := raw + village.roasts + hunters + cooks_roasting
+	if butcher and larder < LARDER_CAP:
+		options.append([busy[Kingdom.Job.BUTCHER] * 1000.0 + larder, Player.Job.HUNT])
+	options.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+	for o in options:
+		if _start_gathering(w, o[1]):
+			return
+
+
+func _start_gathering(w: Player, job: int) -> bool:
+	match job:
+		Player.Job.GOLD:
+			w.job = Player.Job.GOLD
+			w.head_to(village.mine, Village.SITE_REACH, Player.Phase.GO)
+			return true
+		Player.Job.WOOD:
+			var tree := _free_tree(w.pos)
+			if tree < 0:
+				return false
+			w.job = Player.Job.WOOD
+			w.work_tree = tree
+			w.head_to(map.tree_spots[tree], TREE_REACH, Player.Phase.GO)
+			return true
+	var prey := _free_sheep(w.pos)
+	if prey == null:
+		return false
+	w.job = Player.Job.HUNT
+	w.work_prey = prey
+	w.head_to(prey.pos, HUNT_RANGE * 0.8, Player.Phase.GO)
+	return true
+
+
+## Árvore em pé mais perto que nenhum outro aldeão já pegou.
+func _free_tree(from: Vector2) -> int:
+	var best := -1
+	var best_d := INF
+	for i in map.tree_spots.size():
+		if map.tree_regrow[i] > 0.0 or not _reachable(map.tree_spots[i]):
+			continue
+		var d := from.distance_squared_to(map.tree_spots[i])
+		if d >= best_d:
+			continue
+		var taken := false
+		for o in workers:
+			if o.work_tree == i:
+				taken = true
+				break
+		if not taken:
+			best = i
+			best_d = d
+	return best
+
+
+func _free_sheep(from: Vector2) -> Player:
+	var best: Player = null
+	var best_d := INF
+	for s in sheep:
+		if s.is_dead():
+			continue
+		var d := from.distance_squared_to(s.pos)
+		if d >= best_d:
+			continue
+		var taken := false
+		for o in workers:
+			if o.work_prey == s:
+				taken = true
+				break
+		if not taken:
+			best = s
+			best_d = d
+	return best
+
+
+## Player vivo e ferido (abaixo de `below` da vida) que a vila atende agora, conforme heal_mode.
+func _hurt_player(below: float, from := Vector2.ZERO) -> Player:
+	var best: Player = null
+	var best_score := INF
+	for p in players:
+		if p.is_dead() or p.hp >= p.max_hp * below:
+			continue
+		var score: float
+		match heal_mode:
+			HealMode.NEAREST:
+				score = from.distance_squared_to(p.pos)
+			HealMode.FAIR:
+				score = _last_healed.get(p, -1.0)  # nunca recebeu = primeiro da fila
+			_:
+				score = p.hp / p.max_hp
+		if score < best_score:
+			best = p
+			best_score = score
+	return best
+
+
+## Carne na mão: crua vai direto pra quem está mal (cura menos, mas chega já)
+func _route_meat(w: Player) -> void:
+	var hurt := _hurt_player(RAW_DELIVERY_HP, w.pos)
+	w.work_prey = hurt
+	if hurt != null:
+		w.head_to(hurt.pos, DELIVERY_REACH * 0.8, Player.Phase.HAUL)
+	else:
+		w.head_to(village.kitchen, Village.SITE_REACH, Player.Phase.HAUL)
+
+
+## Entrega em mãos: mantém o aldeão apontado pra alguém vivo.
+func _aim_delivery(w: Player) -> void:
+	if w.work_prey != null and not w.work_prey.is_dead():
+		return
+	if w.cargo == Player.Cargo.MEAT:
+		_route_meat(w)
+		return
+	var target := _hurt_player(1.0, w.pos)
+	if target == null:
+		target = _nearest_ally(w.pos, players)
+	w.work_prey = target
+	if target != null:
+		w.head_to(target.pos, DELIVERY_REACH * 0.8, Player.Phase.HAUL)
+
+
+## Caça: a facada do aldeão mata a ovelha reservada e a carne já sai nas costas dele.
+func _resolve_worker_hunts() -> void:
+	for w in workers:
+		if w.is_dead() or w.job != Player.Job.HUNT or w.cargo != Player.Cargo.NONE:
+			continue
+		if not w.is_attacking() or w.attack_hit:
+			continue
+		var s := w.work_prey
+		if s == null or s.is_dead() or w.pos.distance_to(s.pos) > ATTACK_RANGE:
+			continue
+		w.attack_hit = true
+		s.death_time = 0.0
+		w.load_cargo(Player.Cargo.MEAT)
+		_route_meat(w)
+
+
+## Aldeão encostou em quem ia receber: cura e fica livre.
+func _resolve_deliveries() -> void:
+	for w in workers:
+		var p := w.work_prey
+		if w.is_dead() or w.phase != Player.Phase.HAUL or p == null or p.is_dead():
+			continue
+		if w.cargo != Player.Cargo.MEAT and w.cargo != Player.Cargo.ROAST:
+			continue
+		if w.pos.distance_to(p.pos) > DELIVERY_REACH:
+			continue
+		var heal := ROAST_HEAL if w.cargo == Player.Cargo.ROAST else HEAL_AMOUNT
+		p.hp = minf(p.hp + heal, p.max_hp)
+		p.heal_fx_time = 0.0
+		damage_numbers.append(DamageNumber.new(p.pos, heal, true))
+		_last_healed[p] = game_time
+		w.drop_work()
+
+
+## O que o serviço do aldeão faz no cenário.
+func _resolve_work_fx() -> void:
+	for w in workers:
+		var chopping := w.job == Player.Job.WOOD and w.work_tree >= 0
+		var lighting := w.job == Player.Job.FUEL and w.is_working()  # já no lugar, batendo
+		var swinging := w.phase == Player.Phase.WORK \
+				and (chopping or lighting or w.job == Player.Job.GOLD)
+		if swinging:
+			# A ferramenta está em laço (Player.get_current_frame)
+			var frames := w.light_frames if lighting else (w.axe_frames if chopping else w.pickaxe_frames)
+			var impact := LIGHT_IMPACT_FRAME if lighting else TOOL_IMPACT_FRAME
+			var hits := int((w.anim_time * w.anim_fps + frames - impact) / frames)
+			if w.work_hits >= 0 and hits != w.work_hits:
+				if chopping:
+					map.hit_tree(w.work_tree, _side(map.tree_spots[w.work_tree], w))
+				elif lighting:
+					map.spark_fire(_kitchen_fire)
+				else:
+					map.hit_mine(_village_mine, _side(village.mine, w))
+			w.work_hits = hits
+		else:
+			w.work_hits = -1
+		if chopping and not swinging and w.cargo == Player.Cargo.WOOD:
+			map.chop_tree(w.work_tree, _side(map.tree_spots[w.work_tree], w))
+			w.work_tree = -1  ## cortada: não é mais dele (e não derruba de novo quando ela voltar)
+		# Descarga terminou (descarregava no frame passado, agora não): o recurso pipoca.
+		if w.phase == Player.Phase.UNLOAD:
+			w.fx_cargo = w.cargo
+		elif w.fx_cargo != Player.Cargo.NONE:
+			if not w.is_dead():
+				var at := village.kitchen + Vector2(-84, 4) if w.fx_cargo == Player.Cargo.MEAT \
+						else village.depot + Vector2(randf_range(-56, 56), randf_range(-8, 14))
+				map.pop_resource(w.fx_cargo, at)
+				damage_numbers.append(DamageNumber.note(at + Vector2(0, 44),
+						"+%d" % int(Village.LOAD[w.fx_cargo]), RES_TEXT[w.fx_cargo]))
+			w.fx_cargo = Player.Cargo.NONE
+
+
+## +1 se `spot` está à direita do aldeão, -1 se à esquerda.
+func _side(spot: Vector2, w: Player) -> float:
+	return 1.0 if spot.x >= w.pos.x else -1.0
+
+
+## Espeto na fogueira da vila.
+func _update_spit() -> void:
+	var progress := -1.0
+	var turning := false
+	for w in workers:
+		if w.job == Player.Job.COOK and w.phase == Player.Phase.WORK:
+			progress = 1.0 - w.work_timer / Player.ROAST_TIME
+			turning = w.is_working()
+	if progress < 0.0 and _spit_shown < 0.0:
+		return
+	_spit_shown = progress
+	map.set_spit(_kitchen_fire, progress, turning)
+
+
+## Números da vila pro HUD e pros letreiros no mapa: o HUD não mede nem conta nada, recebe pronto.
+func _village_stats() -> Dictionary:
+	var stats := {
+		wood = village.wood, gold = village.gold, meat = village.meat,
+		roasts = village.roasts, fire = village.fire_fuel,
+		mutex = village.use_mutex, semaphores = village.use_semaphores, threads = use_threads,
+		heal = HEAL_MODE_NAMES[heal_mode],
+		counted = village.counted, delivered = 0.0,
+		mine_used = 0, mine_queue = 0, fire_used = 0, fire_queue = 0,
+		door_used = 0, door_queue = 0,
+	}
+	for w in workers:
+		stats.delivered += w.delivered
+		if w.holds_door:
+			stats.door_used += 1
+		elif w.phase == Player.Phase.ENTER:
+			stats.door_queue += 1
+		if w.holds_mine:
+			stats.mine_used += 1
+		elif w.holds_fire:
+			stats.fire_used += 1
+		elif w.phase == Player.Phase.QUEUE and w.job == Player.Job.GOLD:
+			stats.mine_queue += 1
+		elif w.phase == Player.Phase.QUEUE and w.job == Player.Job.COOK:
+			stats.fire_queue += 1
+	return stats
 
 
 func _process(delta: float) -> void:
+	if game_over:
+		# Tudo parado: só o letreiro. Nenhuma Thread nasce depois da derrota.
+		banner.show_banner("FIM DE JOGO — chegaram ao LEVEL %d     [R] recomeça" % level, 1.0)
+		return
+	game_time += delta
 	_update_level(delta)
+	# A fogueira da vila gasta a lenha aqui, com nenhuma Thread rodando.
+	village.burn(delta)
+	if players[0].is_bot:
+		_bot_govern(delta)
+	_sync_workers()  # o reino ganhou moradia (árvore/Casa): nasce o aldeão
+	_update_work_rates()
+	if village.fire_lit() != _fire_shown:
+		_fire_shown = village.fire_lit()
+		map.set_fire_lit(_kitchen_fire, _fire_shown)
+
+	# Quem os goblins podem escolher neste frame.
+	_prey.clear()
+	for a in allies:
+		if not a.is_busy():
+			_prey.append(a)
 
 	for u in units:
 		# main thread: Input não é thread-safe, e a IA só escreve `input`.
-		if u.is_enemy:
-			u.chase(players, map, u.attack_range, u.attack_cooldown, delta)
+		if u.is_worker:
+			_think_worker(u)
+		elif u.is_enemy:
+			# Goblin vai em quem estiver mais perto, player ou aldeão.
+			u.chase(_prey, map, u.attack_range, u.attack_cooldown, delta)
 			# Mesmo instante que o arqueiro dispara a flecha: chase() acabou
 			# de decidir "começou a atacar agora" (attack_time == 0.0).
 			# not is_dead(): morrer bem nesse frame congela attack_time em
@@ -560,10 +1204,6 @@ func _process(delta: float) -> void:
 		s.wander(delta)
 		s.step(delta, 0, PLAY_AREA, map.blockers)
 
-	for w in workers:
-		w.haul(delta)
-		w.step(delta, 0, PLAY_AREA, map.blockers)
-
 	_frame_t0 = Time.get_ticks_usec()
 	if use_threads:
 		# Uma Thread por player, criada e destruída a cada frame.
@@ -587,12 +1227,21 @@ func _process(delta: float) -> void:
 	_resolve_monk_aura(delta)
 	_resolve_sheep_hits()
 	_resolve_meat_pickup()
+	_resolve_worker_hunts()
+	_resolve_deliveries()
+	_resolve_work_fx()
+	_update_spit()
 	_resolve_collisions()
+	_check_defeat()
+	if game_over:
+		return
 
 	# lerp: o FPS instantâneo do Godot oscila demais pra ler na tela.
 	fps_by_mode[use_threads] = lerpf(fps_by_mode[use_threads], Engine.get_frames_per_second(), 0.1)
 	ms_by_mode[use_threads] = lerpf(ms_by_mode[use_threads], _span_usec() / 1000.0, 0.1)
 	_update_camera(delta)
+	_village_now = _village_stats()
+	hud.update_village(_village_now)
 	hud.update_stats(use_threads, ms_by_mode, fps_by_mode, units, _frame_t0, level, no_mobs)
 	side.update_panel(players, players.map(_player_hints), level, no_mobs, kingdom)
 	queue_redraw()  ## só as flechas usam _draw() agora (ver comentário lá)
@@ -605,12 +1254,15 @@ func _step_player(i: int, delta: float) -> void:
 
 ## Dano e morte: mexe em dois objetos ao mesmo tempo, então roda na main
 ## thread depois da barreira — as tarefas continuam sem lock. Vale pros dois
-## lados: player bate no inimigo e o inimigo bate nos players.
+## lados: player bate no inimigo e o inimigo bate em players e aldeões.
 func _resolve_attacks() -> void:
 	var to_remove: Array[Player] = []
 	for u in units:
 		if u.is_dead():
-			if u.death_time > Player.DEATH_TIME:
+			# Aldeão demora bem mais pra voltar (a Thread dele segue rodando, só contando o tempo)
+			var wait := Player.DEATH_TIME if u.is_enemy \
+					else (WORKER_RESPAWN_TIME if u.is_worker else PLAYER_RESPAWN_TIME)
+			if u.death_time > wait:
 				if u.is_enemy:
 					to_remove.append(u)  ## onda: inimigo morto não volta, só some
 				else:
@@ -618,13 +1270,15 @@ func _resolve_attacks() -> void:
 					u.hp = u.max_hp
 					u.death_time = -1.0
 					u.pos = u.spawn_pos
+					if u.is_worker:
+						u.spawn_fx_time = 0.0  ## baforada: não surge do nada
 			continue
-		if u.is_archer or u.is_monk or u.is_thrower or u.is_bomber:
-			continue  ## arqueira/dinamite são à distância; curandeiro não briga; barril explode
+		if u.is_archer or u.is_monk or u.is_thrower or u.is_bomber or u.is_worker:
+			continue  ## arqueira/dinamite são à distância; curandeiro e aldeão não brigam; barril explode
 		if not u.is_attacking() or u.attack_hit:
 			continue
 		for v in units:
-			if v.is_enemy == u.is_enemy or v.is_dead():
+			if v.is_enemy == u.is_enemy or v.is_dead() or v.is_hidden():
 				continue
 			if u.pos.distance_to(v.pos) < u.attack_range:
 				u.attack_hit = true
@@ -643,6 +1297,10 @@ func _resolve_attacks() -> void:
 					v.hp = 0.0
 					v.death_time = 0.0
 	for u in to_remove:
+		village.add(Village.Res.GOLD, GOBLIN_GOLD)
+		map.pop_resource(Village.Res.GOLD, u.pos + Vector2(0, 24))
+		damage_numbers.append(DamageNumber.note(u.pos + Vector2(0, 40), "+%d" % GOBLIN_GOLD,
+				RES_TEXT[Village.Res.GOLD]))
 		_remove_enemy(u)
 
 
@@ -699,23 +1357,24 @@ func _resolve_arrow_hits() -> void:
 
 
 ## Estouro em área: dano só quando should_blast() vira true (uma vez só, no
-## fim do pavio — ver Dynamite) e só nos players dentro de BLAST_RADIUS do
+## fim do pavio — ver Dynamite) e só em players e aldeões dentro de BLAST_RADIUS do
 ## ponto onde ela pousou. Roda depois da barreira, igual ao resto do dano.
 func _resolve_dynamite_hits() -> void:
 	for d in dynamites:
 		if not d.should_blast():
 			continue
 		_shake_camera(CAM_SHAKE_SPECIAL)
-		for p in players:
-			if p.is_dead():
+		for p in allies:
+			if p.is_dead() or p.is_hidden():
 				continue
 			if p.pos.distance_to(d.target_pos) > Dynamite.BLAST_RADIUS:
 				continue
-			p.hp -= d.damage
+			var dmg := d.damage * (WORKER_BLAST_MULT if p.is_worker else 1.0)
+			p.hp -= dmg
 			p.hit_flash_time = 0.0
 			p.hit_pop_time = 0.0
 			_knockback(p, d.target_pos)
-			damage_numbers.append(DamageNumber.new(p.pos, d.damage))
+			damage_numbers.append(DamageNumber.new(p.pos, dmg))
 			if p.hp <= 0.0:
 				p.hp = 0.0
 				p.death_time = 0.0
@@ -724,23 +1383,24 @@ func _resolve_dynamite_hits() -> void:
 ## Goblin do Barril: não bate, chega perto e explode — chase() já acendeu o
 ## pavio (fuse_time = 0.0) no mesmo instante que decidiu atacar; aqui só
 ## checamos se ele já terminou (fuse_done(), uma vez só). Estoura em área
-## nos players por perto E mata ele mesmo — mexe em dois objetos ao mesmo
+## em players e aldeões por perto E mata ele mesmo — mexe em dois objetos ao mesmo
 ## tempo, então roda depois da barreira, igual ao resto do dano.
 func _resolve_bomber_blasts() -> void:
 	for u in units:
 		if u.is_dead() or not u.is_bomber or not u.fuse_done():
 			continue
 		_shake_camera(CAM_SHAKE_SPECIAL)
-		for p in players:
-			if p.is_dead():
+		for p in allies:
+			if p.is_dead() or p.is_hidden():
 				continue
 			if p.pos.distance_to(u.pos) > BOMBER_BLAST_RADIUS:
 				continue
-			p.hp -= u.attack_damage
+			var dmg := u.attack_damage * (WORKER_BLAST_MULT if p.is_worker else 1.0)
+			p.hp -= dmg
 			p.hit_flash_time = 0.0
 			p.hit_pop_time = 0.0
 			_knockback(p, u.pos)
-			damage_numbers.append(DamageNumber.new(p.pos, u.attack_damage))
+			damage_numbers.append(DamageNumber.new(p.pos, dmg))
 			if p.hp <= 0.0:
 				p.hp = 0.0
 				p.death_time = 0.0
@@ -831,7 +1491,7 @@ func _resolve_collisions() -> void:
 		for j in range(i + 1, bodies.size()):
 			var a := bodies[i]
 			var b := bodies[j]
-			if a.is_dead() or b.is_dead():
+			if a.is_dead() or b.is_dead() or a.is_hidden() or b.is_hidden():
 				continue
 			var d := b.pos - a.pos
 			var dist := d.length()
@@ -900,21 +1560,19 @@ func _fire_arrow(p: Player) -> void:
 	arrows.append(Arrow.new(from, from + dir * SHOT_RANGE, Arrow.Mode.SHOT))
 
 
-## Nasce na posição do goblin, mirando o player vivo mais perto (o mesmo alvo
-## que chase() já escolheu pra parar e atacar — recalculado aqui porque
-## chase() não expõe quem escolheu). Sem alvo vivo, não arremessa nada.
+## Nasce na posição do goblin, mirando o player ou aldeão vivo mais perto.
 func _throw_dynamite(u: Player) -> void:
-	var target := _nearest_player(u.pos)
+	var target := _nearest_ally(u.pos, _prey)
 	if target == null:
 		return
 	var from := u.pos + Vector2(0, -20)
 	dynamites.append(Dynamite.new(from, target.pos, u.attack_damage))
 
 
-func _nearest_player(from: Vector2) -> Player:
+func _nearest_ally(from: Vector2, among: Array[Player]) -> Player:
 	var best: Player = null
 	var best_d := INF
-	for p in players:
+	for p in among:
 		if p.is_dead():
 			continue
 		var d := from.distance_squared_to(p.pos)
@@ -971,7 +1629,7 @@ func _span_usec() -> int:
 	return last - _frame_t0
 
 
-## Só as flechas — players/inimigo/ovelhas/pawns agora se desenham sozinhos via
+## Só as flechas — players/inimigo/ovelhas/aldeões agora se desenham sozinhos via
 ## UnitSprite (y-sorted dentro do ArenaMap). Continua em z_index 0 (Main),
 ## então fica sempre por cima do mapa (que é z_index -1) — sem y-sort com
 ## árvore ainda, mas ok pra um projétil que já some rápido.
@@ -987,6 +1645,7 @@ func _draw() -> void:
 		_draw_harvest_prompt(p)
 		if p.is_archer:
 			_draw_aim_pointer(p)
+	_draw_village()
 	for site in build_sites:
 		if not site.done:
 			_draw_build_progress(site)
@@ -994,6 +1653,37 @@ func _draw() -> void:
 	_draw_ghost()
 	for n in damage_numbers:
 		_draw_damage_number(n)
+
+
+## Letreiros da vila no próprio mapa.
+func _draw_village() -> void:
+	if _village_now.is_empty():
+		return
+	var v := _village_now
+	var depot_text := "ARMAZÉM %d/%d" % [v.door_used, Village.DEPOT_SLOTS]
+	if v.door_queue > 0:
+		depot_text += " · fila %d" % v.door_queue
+	_draw_sign(village.depot + Vector2(0, -150), depot_text)
+	var mine_text := "MINA %d/%d" % [v.mine_used, Village.MINE_SLOTS]
+	if v.mine_queue > 0:
+		mine_text += " · fila %d" % v.mine_queue
+	_draw_sign(village.mine + Vector2(0, -140), mine_text)
+	var fire_text := "FOGUEIRA %ds" % ceili(v.fire) if v.fire > 0.0 else "FOGUEIRA apagada"
+	if v.fire_queue > 0:
+		fire_text += " · fila %d" % v.fire_queue
+	_draw_sign(village.kitchen + Vector2(0, -110), fire_text)
+	var tex := MeatDrop.TEXTURE
+	for i in floori(v.meat + Village.EPS):
+		draw_texture_rect(tex, Rect2(village.kitchen + Vector2(-96 - i * 22, -44), Vector2(56, 56)), false)
+	for i in int(v.roasts):
+		draw_texture_rect(ROAST_MEAT, Rect2(village.kitchen + Vector2(40 + i * 22, -44), Vector2(56, 56)), false)
+
+
+func _draw_sign(pos: Vector2, text: String) -> void:
+	var font := ThemeDB.fallback_font
+	var at := pos - Vector2(150, 0)
+	draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 300, 16, 5, Color(0, 0, 0, 0.8))
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_CENTER, 300, 16, Color(1.0, 0.95, 0.75))
 
 
 ## Número flutuante de dano/cura: grande, com contorno preto grosso pra
@@ -1112,13 +1802,45 @@ func _update_camera(delta: float) -> void:
 	var vp := get_viewport_rect().size
 	var min_zoom := maxf(vp.x / WORLD.x, vp.y / WORLD.y)
 	var z := clampf(minf(vp.x / box.size.x, vp.y / box.size.y), min_zoom, 1.0)
+	var target := box.get_center()
+	if cam_focus != CamFocus.PLAYERS:
+		z = FOCUS_ZOOM
+		# O painel da esquerda do HUD é mais largo que o da direita.
+		target = _focus_target() - Vector2(hud.free_center_shift(), 0.0) / z
 	cam.zoom = cam.zoom.lerp(Vector2(z, z), 0.08)
-	cam.position = cam.position.lerp(box.get_center(), 0.12)
+	cam.position = cam.position.lerp(target, 0.12)
 
 	# Tremor: offset separado do lerp de posição, pra não "puxar" o
 	# enquadramento — decai sozinho até a próxima pancada empurrar de novo.
 	cam_shake = maxf(cam_shake - CAM_SHAKE_DECAY * delta, 0.0)
 	cam.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * cam_shake
+
+
+## Onde a câmera para no modo apresentação.
+func _focus_target() -> Vector2:
+	match cam_focus:
+		CamFocus.DEPOT:
+			_focus_point = village.depot + Vector2(0, -50)
+		CamFocus.MINE:
+			_focus_point = village.mine + Vector2(0, -50)
+		CamFocus.KITCHEN:
+			_focus_point = village.kitchen + Vector2(0, -40)
+		CamFocus.WOODCUTTER:
+			_follow_worker(Player.Job.WOOD)
+		CamFocus.HUNTER:
+			_follow_worker(Player.Job.HUNT)
+	return _focus_point
+
+
+func _follow_worker(job: int) -> void:
+	var best: Player = null
+	for w in workers:
+		if w.is_dead() or w.job != job:
+			continue
+		if best == null or (w.phase == Player.Phase.WORK and best.phase != Player.Phase.WORK):
+			best = w
+	if best != null:
+		_focus_point = best.pos
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -1138,7 +1860,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_G:
 		_summon_random_enemy()
-	elif event is InputEventKey and event.pressed and not event.echo 			and event.physical_keycode == KEY_M:
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_M:
 		_toggle_no_mobs()
 	elif event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_B:
@@ -1146,6 +1869,26 @@ func _unhandled_input(event: InputEvent) -> void:
 		var on := not players[0].is_bot
 		for p in players:
 			p.is_bot = on
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_C:
+		cam_focus = wrapi(cam_focus + 1, 0, CamFocus.size()) as CamFocus
+		_focus_point = cam.position
+		hud.set_camera_caption(FOCUS_CAPTIONS[cam_focus])
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_R and game_over:
+		get_tree().reload_current_scene()
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_Z:
+		heal_mode = wrapi(heal_mode + 1, 0, HealMode.size()) as HealMode
+		hud.show_notice("Cura primeiro: %s" % HEAL_MODE_NAMES[heal_mode], 2.5)
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_V:
+		# Liga/desliga os semáforos (as filas)
+		village.use_semaphores = not village.use_semaphores
+	elif event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_X:
+		# Liga/desliga o lock do depósito no armazém (Village.deposit)
+		village.use_mutex = not village.use_mutex
 	elif event.is_action_pressed("ui_cancel"):
 		## ESC: volta para a seleção de personagem.
 		get_tree().change_scene_to_file("res://scenes/character_select.tscn")
@@ -1160,7 +1903,9 @@ func _try_harvest(p: Player) -> void:
 	if p.carrying:
 		for b in map.castle_spots:
 			if p.pos.distance_to(b) < HARVEST_REACH:
-				kingdom.deposit(p.harvest_kind)
+				# O Camponês rende por viagem o mesmo que um aldeão.
+				kingdom.deposit(p.harvest_kind, int(Village.LOAD[
+						Village.Res.WOOD if p.harvest_kind == "wood" else Village.Res.GOLD]))
 				if p.harvest_kind == "wood":
 					p.wood += 1
 				else:
@@ -1173,7 +1918,7 @@ func _try_harvest(p: Player) -> void:
 		if map.tree_regrow[i] > 0.0:
 			continue  ## já virou toco, ainda crescendo de novo
 		if p.pos.distance_to(map.tree_spots[i]) < HARVEST_REACH:
-			map.chop_tree(i)
+			map.chop_tree(i, 1.0 if map.tree_spots[i].x >= p.pos.x else -1.0)
 			p.harvest_kind = "wood"
 			p.harvest_time = 0.0
 			return
@@ -1207,8 +1952,7 @@ func _player_hints(p: Player) -> Array:
 	var out: Array = []
 	if p.is_bot:
 		out.append(["B", "bot jogando — devolve o controle"])
-	if p.pos.distance_to(map.main_castle_spot) < CASTLE_REACH:
-		out.append(["T", "abrir o castelo (evolução)"])
+	out.append(["T", "castelo: evolução, trabalhadores, obras"])
 	if p.axe_texture:
 		if p.carrying:
 			var at_castle := false
@@ -1250,7 +1994,12 @@ func _player_at_castle() -> Player:
 
 
 func _open_castle_menu() -> void:
+	# De qualquer lugar: quem posiciona a obra é quem está na porta ou o 1º player vivo fora do bot.
 	var p := _player_at_castle()
+	if p == null:
+		for q in players:
+			if not q.is_dead() and (p == null or (p.is_bot and not q.is_bot)):
+				p = q
 	if p == null:
 		return
 	_end_placement()

@@ -1,53 +1,63 @@
 class_name Kingdom
 extends RefCounted
 
-## Reino: banco de recursos compartilhado, árvore de evolução comprada e a
-## distribuição dos trabalhadores por profissão. Dado puro, só main thread —
-## quem desenha é o CastleMenu/HUD, quem deposita é main.gd (_try_harvest).
-## Os trabalhadores ainda não nascem: aqui é só número, pronto pra quando
-## eles virarem unidade.
+## Reino: árvore de evolução comprada e a distribuição dos trabalhadores por
+## profissão. Dado puro, só main thread — quem desenha é o CastleMenu/HUD.
+##
+## O banco não mora aqui: é o estoque da Village, o mesmo que os aldeões
+## enchem (e que o mutex protege). Comprar evolução e erguer construção
+## gastam a lenha e o ouro de verdade que eles trouxeram.
+##
+## Os números daqui mandam nos aldeões do mapa (main.gd): `max_workers` é
+## quantos existem (_sync_workers) e `assigned` quantos trabalham em cada
+## profissão (_assign_job); os que sobram ficam livres.
 
 enum Job { LUMBERJACK, MINER, BUTCHER, HEALER }
 const JOB_TITLES := ["Lenhador", "Minerador", "Açougueiro", "Curandeiro"]
 
-## Banco infinito: compra/constrói sem gastar. A coleta continua somando em
-## wood/gold, então desligar volta à economia de verdade sem mexer em mais
-## nada. A trava de level da árvore vale igual com ele ligado.
-const INFINITE_BANK := true
+## Banco infinito: compra/constrói sem gastar — só pra testar a árvore sem
+## esperar a coleta. A trava de level vale igual com ele ligado.
+const INFINITE_BANK := false
 const HOUSE_WORKERS := 2  ## moradia que cada Casa construída soma
 
-var wood := 0
-var gold := 0
-var max_workers := 2
-var job_cap: Array[int] = [2, 0, 0, 0]  ## 0 = profissão travada
-var assigned: Array[int] = [2, 0, 0, 0]
+var village: Village  ## o estoque de verdade; main.gd liga ao criar a vila
+## Começa com 2 lenhadores e 1 minerador: o minerador é o que faz o ouro
+## entrar desde o início, mesmo no modo sem mobs.
+var max_workers := 3
+var job_cap: Array[int] = [2, 1, 0, 0]  ## 0 = profissão travada
+var assigned: Array[int] = [2, 1, 0, 0]
 var bought: Dictionary[StringName, bool] = {}
 var built: Dictionary[StringName, int] = {}  ## construções prontas, por tipo
 
 
+## Entrega do Camponês jogável (main.gd _try_harvest): vai pro mesmo estoque.
 func deposit(kind: String, n := 1) -> void:
-	if kind == "wood":
-		wood += n
-	elif kind == "gold":
-		gold += n
+	village.add(Village.Res.WOOD if kind == "wood" else Village.Res.GOLD, n)
+
+
+## Unidades inteiras no estoque (a carga dos aldeões entra em fatias).
+func stock(kind: String) -> int:
+	return floori((village.wood if kind == "wood" else village.gold) + Village.EPS)
 
 
 ## Texto do saldo pro HUD/menu: "∞" com o banco infinito.
 func bank(kind: String) -> String:
 	if INFINITE_BANK:
 		return "∞"
-	return str(wood if kind == "wood" else gold)
+	return str(stock(kind))
 
 
 func has_funds(w: int, g: int) -> bool:
-	return INFINITE_BANK or (wood >= w and gold >= g)
+	return INFINITE_BANK or (stock("wood") >= w and stock("gold") >= g)
 
 
+## Gasta do estoque da vila — com o lock dele, mesmo sendo main thread e o
+## menu rodando com o jogo pausado: é a mesma porta que as Threads usam.
 func pay(w: int, g: int) -> void:
 	if INFINITE_BANK:
 		return
-	wood -= w
-	gold -= g
+	village.take(Village.Res.WOOD, w)
+	village.take(Village.Res.GOLD, g)
 
 
 ## Por que o nó não compra agora: "" = pode; senão o motivo curto que o menu
@@ -75,6 +85,7 @@ func buy(id: StringName, level: int) -> bool:
 	max_workers += fx.get("max_workers", 0)
 	if fx.has("job"):
 		job_cap[fx.job] += fx.get("cap", 0)
+	auto_assign()
 	return true
 
 
@@ -99,6 +110,22 @@ func on_built(kind: StringName) -> void:
 	built[kind] = built.get(kind, 0) + 1
 	if kind == &"house":
 		max_workers += HOUSE_WORKERS
+		auto_assign()
+
+
+## Trabalhador livre não fica parado esperando o jogador lembrar da aba: a
+## cada compra, quem está sobrando vai pra profissão liberada com menos gente
+## (a que acabou de abrir, com zero, ganha primeiro). A aba Trabalhadores
+## continua mandando — isto só dá o primeiro arranjo.
+func auto_assign() -> void:
+	while free_workers() > 0:
+		var best := -1
+		for job in job_cap.size():
+			if assigned[job] < job_cap[job] and (best < 0 or assigned[job] < assigned[best]):
+				best = job
+		if best < 0:
+			return
+		assigned[best] += 1
 
 
 func is_job_unlocked(job: int) -> bool:

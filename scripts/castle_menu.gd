@@ -389,7 +389,7 @@ func _draw_workers(body: Rect2) -> void:
 			_kingdom.assigned[job], _kingdom.job_cap[job]], 18, INK)
 		_button(Rect2(row.position.x + 360, row.position.y + 6, 32, 32), "+", {job = job, delta = 1})
 	var foot_y := body.position.y + 30 + Kingdom.JOB_TITLES.size() * ROW_H + 10
-	_ink(Vector2(body.position.x + 12, foot_y), "Livres: %d   —   Total: %d   (os trabalhadores ainda não aparecem no mapa)" % [
+	_ink(Vector2(body.position.x + 12, foot_y), "Livres: %d   —   Total: %d   (cada um é um aldeão no mapa; os livres ficam parados)" % [
 		_kingdom.free_workers(), _kingdom.max_workers], 15, INK_SOFT)
 
 

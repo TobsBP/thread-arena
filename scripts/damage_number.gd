@@ -26,6 +26,14 @@ func _init(spawn_pos: Vector2, amount: float, heal := false) -> void:
 	color = HEAL_COLOR if heal else DAMAGE_COLOR
 
 
+## Mesmo número flutuante, com texto e cor de quem chamou.
+static func note(spawn_pos: Vector2, label: String, tint: Color) -> DamageNumber:
+	var n := DamageNumber.new(spawn_pos, 0.0)
+	n.text = label
+	n.color = tint
+	return n
+
+
 func step(delta: float) -> void:
 	age += delta
 	pos.y -= RISE_SPEED * delta

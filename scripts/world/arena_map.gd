@@ -86,6 +86,10 @@ const STUMPS := [
 	preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Trees/Stump 4.png"),
 ]
 const REGROW_TIME := 25.0
+## Nos últimos GROW_TIME segundos o toco dá lugar a uma muda que cresce até o tamanho cheio.
+const GROW_TIME := 7.0
+const SAPLING_SCALE := 0.25
+const FELL_TIME := 0.6  ## a árvore cortada tomba e some
 
 ## Castelo principal: a única construção que já começa no mapa (abre a
 ## árvore de evolução, ver CastleMenu) — o resto o jogador ergue. No meio da
@@ -171,18 +175,35 @@ const BRIDGE_ALL := preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/T
 const BRIDGE_PIECE_RECT := Rect2(18, 0, 132, 64)
 
 ## Fogueiras: os únicos pontos quentes do mapa, um por canto habitado. O pack
-## não tem uma fogueira pronta — é a pilha de lenha com a chama por cima, a
-## sombra embaixo e uma luz em volta.
-const FIRE := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Particle FX/Fire_02.png")
-const FIRE_WOOD := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Resources/Wood/Wood Resource/Wood Resource.png")
+## não tem uma fogueira pronta.
+const CAMPFIRE_LIT := preload("res://assets/Thread Arena/Campfire_Lit.png")
+const CAMPFIRE_OUT := preload("res://assets/Thread Arena/Campfire_Out.png")
 const FIRE_SHADOW := preload("res://assets/Tiny Swords (Free Pack)/Tiny Swords (Free Pack)/Terrain/Tileset/Shadow.png")
-const FIRE_FRAMES := 10
-const FIRE_FPS := 12.0
+const CAMPFIRE_FRAMES := 8
+const CAMPFIRE_SIZE := Vector2(96, 112)
+const FIRE_FPS := 10.0
+const CAMPFIRE_CLEAR := 140.0  ## raio em volta da fogueira onde não nasce árvore
+## Espeto sobre a fogueira da vila (arte nossa, mesmo quadro da fogueira)
+const SPIT_RAW := preload("res://assets/Thread Arena/Spit_Raw.png")
+const SPIT_ROAST := preload("res://assets/Thread Arena/Spit_Roast.png")
+## Recurso "pipocando" (pack Update 010, 7 quadros de 128px)
+const RESOURCE_POPS := [
+	preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Resources/W_Spawn.png"),
+	preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Resources/G_Spawn.png"),
+	preload("res://assets/Tiny Swords/Tiny Swords (Update 010)/Resources/Resources/M_Spawn.png"),
+]
+const RESOURCE_POP_FRAMES := 7
+const RESOURCE_FOOT := 0.86
+const WOOD_CHIP := Color(0.86, 0.71, 0.44)
+const GOLD_CHIP := Color(1.0, 0.84, 0.22)
+const SPARK := Color(1.0, 0.62, 0.16)
 const CAMPFIRES := [
 	Vector2(0.14, 0.20), Vector2(0.53, 0.10), Vector2(0.71, 0.19),
 	Vector2(0.30, 0.88), Vector2(0.88, 0.82),
+	# A da vila: à direita da pracinha do castelo principal, onde os aldeões assam a carne.
+	Vector2(0.574, 0.741),
 ]
-## Chama assentada na lenha e luz centrada nela — os dois no olho, ajuste aqui.
+## Luz centrada na chama — no olho, ajuste aqui.
 @export var fire_offset := Vector2(0, -34)
 @export var fire_light_color := Color(1.0, 0.72, 0.36)
 @export var fire_light_energy := 1.1
@@ -222,13 +243,22 @@ var main_castle_spot := Vector2.ZERO
 var _castle_rect := Rect2()  ## quadro inteiro do principal, pra cenário não nascer em cima
 var tree_spots: Array[Vector2] = []
 var gold_spots: Array[Vector2] = []
+var _mine_nodes: Array[Node2D] = []  ## paralelo a gold_spots, pra mina tremer na picaretada
+var _mine_x: Array[float] = []  ## x de repouso de cada mina
+## Pé de cada fogueira, na ordem de CAMPFIRES, e os nós de cada uma.
+var campfire_spots: Array[Vector2] = []
+var _fire_parts: Array[Array] = []
+var _fire_corners: Array[Vector2] = []  ## canto do quadro de cada fogueira
+var _spits: Dictionary[int, Array] = {}  ## fogueira -> [crua, assada], criado no 1º uso
 ## Paralelos a tree_spots, pra cada árvore poder virar toco e voltar a
 ## crescer (ver chop_tree() e o _process()).
 var _tree_nodes: Array[Node2D] = []
 var _tree_raw_spots: Array[Vector2] = []  ## canto antes do offset do pé, pra recriar o nó
 var _tree_tex: Array[Texture2D] = []  ## árvore original, pra restaurar ao crescer de novo
 var _tree_stump_tex: Array[Texture2D] = []
-var tree_regrow: Array[float] = []  ## <= 0 = árvore em pé; > 0 = segundos até voltar
+var tree_regrow: Array[float] = []  ## <= 0 = árvore em pé e crescida; > 0 = segundos até voltar
+var _tree_growing: Array[bool] = []  ## já trocou o toco pela muda (ver GROW_TIME)
+var _tree_shake: Dictionary[int, Tween] = {}  ## balanço da machadada em andamento
 ## Grade A* da PLAY_AREA, com os blockers marcados como sólidos — montada no
 ## _ready() e só consultada pela main thread (bot_think/chase), nunca na tarefa.
 var nav := AStarGrid2D.new()
@@ -266,19 +296,140 @@ func _process(delta: float) -> void:
 		if tree_regrow[i] <= 0.0:
 			continue
 		tree_regrow[i] -= delta
-		if tree_regrow[i] <= 0.0:
+		if not _tree_growing[i] and tree_regrow[i] < GROW_TIME:
+			_tree_growing[i] = true
 			_tree_nodes[i].queue_free()
-			_tree_nodes[i] = _add_decor(_tree_tex[i], _tree_raw_spots[i], TREE_FRAMES)
+			_tree_nodes[i] = _add_tree(_tree_tex[i], _tree_raw_spots[i], TREE_FRAMES)
+		if _tree_growing[i]:
+			# Cresce a partir do pé (a origem do nó), do tamanho de muda ao cheio.
+			var grown := clampf(1.0 - tree_regrow[i] / GROW_TIME, 0.0, 1.0)
+			_tree_nodes[i].scale = Vector2.ONE * lerpf(SAPLING_SCALE, 1.0, grown)
+			if tree_regrow[i] <= 0.0:
+				_tree_growing[i] = false
 
 
-## Troca a árvore pelo toco (main.gd chama isso ao começar a coleta de
-## madeira) e agenda quando ela volta a virar árvore, no _process() acima.
-func chop_tree(index: int) -> void:
+## Derruba a árvore: tomba pro lado `dir` (+1 direita, -1 esquerda), some e deixa o toco.
+func chop_tree(index: int, dir := 1.0) -> void:
 	if tree_regrow[index] > 0.0:
 		return
 	tree_regrow[index] = REGROW_TIME
-	_tree_nodes[index].queue_free()
-	_tree_nodes[index] = _add_decor(_tree_stump_tex[index], _tree_raw_spots[index], 1)
+	_stop_shake(index)
+	var falling := _tree_nodes[index]
+	_tree_nodes[index] = _add_tree(_tree_stump_tex[index], _tree_raw_spots[index], 1)
+	var tween := falling.create_tween()
+	tween.tween_property(falling, "rotation", dir * 1.45, FELL_TIME) \
+			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.parallel().tween_property(falling, "modulate:a", 0.0, FELL_TIME * 0.35) \
+			.set_delay(FELL_TIME * 0.65)
+	tween.tween_callback(falling.queue_free)
+	_spawn_chips(tree_spots[index] + Vector2(-dir * 16.0, -16.0), dir, 12, WOOD_CHIP)
+
+
+## Machadada: a árvore estremece em torno do pé e solta lascas pro lado de quem bate.
+func hit_tree(index: int, dir: float) -> void:
+	if tree_regrow[index] > 0.0:
+		return
+	_stop_shake(index)
+	var node := _tree_nodes[index]
+	var tween := node.create_tween()
+	tween.tween_property(node, "rotation", dir * 0.08, 0.05)
+	tween.tween_property(node, "rotation", -dir * 0.045, 0.09)
+	tween.tween_property(node, "rotation", 0.0, 0.11)
+	_tree_shake[index] = tween
+	_spawn_chips(tree_spots[index] + Vector2(-dir * 16.0, -16.0), dir, 6, WOOD_CHIP)
+
+
+## Picaretada: a mina dá um tranco e solta lascas de ouro pro lado de quem bate.
+func hit_mine(index: int, dir: float) -> void:
+	var node := _mine_nodes[index]
+	var rest := _mine_x[index]
+	var tween := node.create_tween()
+	tween.tween_property(node, "position:x", rest + dir * 3.0, 0.04)
+	tween.tween_property(node, "position:x", rest - dir * 2.0, 0.07)
+	tween.tween_property(node, "position:x", rest, 0.08)
+	_spawn_chips(gold_spots[index] + Vector2(-dir * 44.0, -34.0), dir, 5, GOLD_CHIP)
+
+
+## O recurso pipoca no chão (a animação de spawn do pack, uma vez só), fica um instante e some.
+func pop_resource(kind: int, at: Vector2) -> void:
+	var tex: Texture2D = RESOURCE_POPS[kind]
+	var anim := _add_decor(tex, at - Vector2(tex.get_height() * 0.5, tex.get_height() * RESOURCE_FOOT),
+			RESOURCE_POP_FRAMES, 12.0, RESOURCE_FOOT) as AnimatedSprite2D
+	anim.sprite_frames.set_animation_loop("default", false)
+	anim.set_frame_and_progress(0, 0.0)
+	anim.play()
+	var tween := anim.create_tween()
+	tween.tween_interval(1.1)
+	tween.tween_property(anim, "modulate:a", 0.0, 0.3)
+	tween.tween_callback(anim.queue_free)
+
+
+func _stop_shake(index: int) -> void:
+	var tween: Tween = _tree_shake.get(index)
+	if tween != null and tween.is_valid():
+		tween.kill()
+	_tree_shake.erase(index)
+	_tree_nodes[index].rotation = 0.0
+
+
+## Lascas (de madeira, de ouro) saltando de `at` pro lado de quem bate.
+func _spawn_chips(at: Vector2, dir: float, amount: int, color: Color) -> void:
+	var chips := CPUParticles2D.new()
+	chips.position = at
+	chips.z_index = 1  # por cima do tronco/da mina, apesar de nascer atrás do pé
+	chips.one_shot = true
+	chips.explosiveness = 1.0
+	chips.amount = amount
+	chips.lifetime = 0.5
+	chips.direction = Vector2(-dir, -1.3)
+	chips.spread = 38.0
+	chips.initial_velocity_min = 90.0
+	chips.initial_velocity_max = 190.0
+	chips.gravity = Vector2(0, 560)
+	chips.scale_amount_min = 3.0
+	chips.scale_amount_max = 6.0
+	chips.color = color
+	chips.finished.connect(chips.queue_free)
+	decor.add_child(chips)
+	chips.emitting = true
+
+
+## Carne no espeto da fogueira `index`: `progress` < 0 tira o espeto.
+func set_spit(index: int, progress: float, turning := true) -> void:
+	if not _spits.has(index):
+		if progress < 0.0:
+			return
+		var pair: Array = []
+		for tex: Texture2D in [SPIT_RAW, SPIT_ROAST]:
+			var node := _add_decor(tex, _fire_corners[index], CAMPFIRE_FRAMES, FIRE_FPS)
+			# Mesma linha de base da fogueira + 2px: o espeto fica na frente da chama.
+			node.position.y += 2.0
+			node.set("offset", (node.get("offset") as Vector2) - Vector2(0, 2))
+			pair.append(node)
+		_spits[index] = pair
+	var raw: Node2D = _spits[index][0]
+	var roast: Node2D = _spits[index][1]
+	raw.visible = progress >= 0.0
+	roast.visible = progress >= 0.0
+	roast.modulate.a = clampf(progress, 0.0, 1.0)
+	# As duas tiras no mesmo quadro, senão a assada "descola" da crua.
+	(raw as AnimatedSprite2D).speed_scale = 1.0 if turning else 0.0
+	(roast as AnimatedSprite2D).speed_scale = 1.0 if turning else 0.0
+	(roast as AnimatedSprite2D).set_frame_and_progress(
+			(raw as AnimatedSprite2D).frame, (raw as AnimatedSprite2D).frame_progress)
+
+
+## Árvore, toco ou muda: enfeite com a origem no pé do tronco.
+func _add_tree(tex: Texture2D, spot: Vector2, frames: int) -> Node2D:
+	var node := _add_decor(tex, spot, frames)
+	_center_pivot(node, tex.get_width() / frames * 0.5)
+	return node
+
+
+## Leva a origem do nó do canto de baixo pro meio da base do quadro, sem mexer onde ele aparece.
+func _center_pivot(node: Node2D, half: float) -> void:
+	node.position.x += half
+	node.set("offset", (node.get("offset") as Vector2) - Vector2(half, 0))
 
 
 ## Nuvem mais opaca = mais perto = mais rápida: a camada inteira ganha
@@ -610,17 +761,22 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 		var idx := rng.randi() % TREES.size()
 		var tree: Texture2D = TREES[idx]
 		var spot := _fit(_edge_spot(rng), tree, TREE_FRAMES)
-		var node := _add_decor(tree, spot, TREE_FRAMES)
-		# Tronco: um retângulo pequeno no pé do quadro, a copa não bloqueia.
 		var fw := tree.get_width() / TREE_FRAMES
+		var foot := spot + Vector2(fw * 0.5, tree.get_height() - 25.0)
+		# Árvore em cima de fogueira esconde o fogo atrás da copa: essa não nasce.
+		if _near_campfire(foot):
+			continue
+		var node := _add_tree(tree, spot, TREE_FRAMES)
+		# Tronco: um retângulo pequeno no pé do quadro, a copa não bloqueia.
 		blockers.append(Rect2(spot + Vector2(fw * 0.5 - 18.0, tree.get_height() - 38.0),
 				Vector2(36.0, 26.0)))
-		tree_spots.append(spot + Vector2(fw * 0.5, tree.get_height() - 25.0))
+		tree_spots.append(foot)
 		_tree_nodes.append(node)
 		_tree_raw_spots.append(spot)
 		_tree_tex.append(tree)
 		_tree_stump_tex.append(STUMPS[idx])
 		tree_regrow.append(0.0)
+		_tree_growing.append(false)
 	for _i in 30:
 		var bush: Texture2D = BUSHES[rng.randi() % BUSHES.size()]
 		_add_decor(bush, _fit(_edge_spot(rng), bush, BUSH_FRAMES), BUSH_FRAMES)
@@ -646,6 +802,8 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 		blockers.append(Rect2(pos + Vector2(size.x * 0.15, size.y * 0.55),
 				Vector2(size.x * 0.7, size.y * 0.35)))
 		gold_spots.append(mine_node.position + Vector2(size.x * 0.5, 0))
+		_mine_nodes.append(mine_node)
+		_mine_x.append(mine_node.position.x)
 	for _i in 14:
 		_add_decor(WATER_ROCKS[rng.randi() % WATER_ROCKS.size()], _water_spot(rng),
 				WATER_ROCK_FRAMES)
@@ -663,6 +821,14 @@ func _build_decor(rng: RandomNumberGenerator) -> void:
 		_add_campfire(ISLAND.position + (spot as Vector2) * ISLAND.size)
 
 
+func _near_campfire(foot: Vector2) -> bool:
+	for spot in CAMPFIRES:
+		var fire := ISLAND.position + (spot as Vector2) * ISLAND.size + Vector2(32, 64)
+		if foot.distance_to(fire) < CAMPFIRE_CLEAR:
+			return true
+	return false
+
+
 ## Empurra o canto do quadro pra dentro da ilha: sorteio perto da beirada
 ## deixaria a árvore (ou a casa) com metade na água.
 func _fit(spot: Vector2, tex: Texture2D, frames: int) -> Vector2:
@@ -670,15 +836,17 @@ func _fit(spot: Vector2, tex: Texture2D, frames: int) -> Vector2:
 	return spot.clamp(ISLAND.position, ISLAND.end - size)
 
 
-## Sombra + lenha + chama + luz, todos na mesma linha de base pra o y-sort
-## tratar a fogueira como um objeto só.
+## Sombra + fogueira (acesa e apagada, só uma visível) + luz.
 func _add_campfire(pos: Vector2) -> void:
 	# Sombra 192x192 centrada na lenha, com a base logo acima dela pra o
 	# y-sort desenhar a sombra primeiro.
 	var shadow := _add_decor(FIRE_SHADOW, pos + Vector2(-64, -132), 1) as Sprite2D
 	shadow.modulate = Color(1, 1, 1, 0.3)
-	_add_decor(FIRE_WOOD, pos, 1)
-	_add_decor(FIRE, pos + fire_offset, FIRE_FRAMES, FIRE_FPS)
+	var corner := pos + Vector2(32.0 - CAMPFIRE_SIZE.x * 0.5, 64.0 - CAMPFIRE_SIZE.y)
+	var burnt := _add_decor(CAMPFIRE_OUT, corner, CAMPFIRE_FRAMES, FIRE_FPS)
+	burnt.visible = false
+	var flame := _add_decor(CAMPFIRE_LIT, corner, CAMPFIRE_FRAMES, FIRE_FPS)
+	_center_pivot(flame, CAMPFIRE_SIZE.x * 0.5)  # pra chama crescer do pé ao acender
 	var light := PointLight2D.new()
 	light.texture = _light_texture()
 	light.color = fire_light_color
@@ -686,6 +854,28 @@ func _add_campfire(pos: Vector2) -> void:
 	light.texture_scale = fire_light_scale
 	light.position = pos + fire_offset + Vector2(32, 32)
 	decor.add_child(light)
+	campfire_spots.append(pos + Vector2(32, 64))
+	_fire_parts.append([flame, light, burnt])
+	_fire_corners.append(corner)
+
+
+## Troca a fogueira acesa (com a luz) pela apagada, ou o contrário. Main thread.
+func set_fire_lit(index: int, lit: bool) -> void:
+	var parts := _fire_parts[index]
+	(parts[0] as Node2D).visible = lit
+	(parts[1] as Node2D).visible = lit
+	(parts[2] as Node2D).visible = not lit
+	if lit:
+		# Pega aos poucos: a chama cresce do pé, passa um tico do tamanho e assenta.
+		var flame := parts[0] as Node2D
+		flame.scale = Vector2.ONE * 0.2
+		flame.create_tween().tween_property(flame, "scale", Vector2.ONE, 0.6) \
+				.set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+## Faísca da pederneira caindo na lenha da fogueira `index`.
+func spark_fire(index: int) -> void:
+	_spawn_chips(campfire_spots[index] + Vector2(-30, -24), -1.0, 6, SPARK)
 
 
 ## Um degradê radial branco->transparente serve de luz; não tem sprite de luz
